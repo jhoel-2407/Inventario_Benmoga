@@ -1,0 +1,15 @@
+import ExcelJS from "exceljs";
+const wb = new ExcelJS.Workbook();
+const inv = wb.addWorksheet("INVENTARIO");
+inv.getRow(1).values = ["CODIGO", "ITEM"];
+inv.getRow(2).values = [75656007062, "1530"];
+const lec = wb.addWorksheet("LECTURA");
+lec.getRow(1).values = ["ZONA", "CODIGO", "ITEM"];
+lec.getRow(2).getCell(1).value = 3;
+lec.getRow(2).getCell(2).value = 75656007062;
+lec.getRow(2).getCell(3).value = { formula: "VLOOKUP(B2,INVENTARIO!A:B,2,0)" };
+const buf = await wb.xlsx.writeBuffer();
+const wb2 = new ExcelJS.Workbook();
+await wb2.xlsx.load(buf);
+const ws = wb2.getWorksheet("LECTURA");
+console.log("col3:", JSON.stringify(ws.getRow(2).getCell(3).value));

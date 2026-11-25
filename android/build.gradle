@@ -1,0 +1,4 @@
+// Proyecto raíz. Solo declara el plugin de Android; la configuracion vive en app/.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

@@ -1,0 +1,12 @@
+import { useState } from 'react';
+import { CheckCircle2, ChevronRight } from 'lucide-react';
+import { api, setSession } from '../lib/api.js';
+import Notice from '../components/Notice.jsx';
+
+function Login({ onLogin }) {
+  const [correo, setCorreo] = useState(''); const [password, setPassword] = useState(''); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  async function submit(e) { e.preventDefault(); setError(''); setLoading(true); try { const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ correo, password }) }); setSession(data.token, data.usuario); onLogin(data.usuario); } catch (e) { setError(e.message); } finally { setLoading(false); } }
+  return <div className="login-layout"><div className="login-brand"><img className="brand-watermark" src="/logo-blesscard.png" alt="" aria-hidden="true"/><img className="brand-logo big" src="/logo-blesscard.png" alt="BLESSCARD"/><p className="eyebrow">BENMOGA Y CÍA S.A.S.</p><h1>El inventario de nuestras tiendas, bajo control.</h1><p className="login-copy">Comercio de prendas de vestir y accesorios. Controla el inventario de los 19 locales con conteo por zonas, seguimiento por empleado y comparación frente al archivo maestra.</p><div className="login-points"><span><CheckCircle2 size={17}/> Conteo desde móvil</span><span><CheckCircle2 size={17}/> Seguimiento por empleado</span><span><CheckCircle2 size={17}/> Reporte de diferencias</span></div></div><div className="login-panel"><form className="login-form" data-testid="login-form" onSubmit={submit}><div className="brand-small">BENMOGA <span>INVENTARIO</span></div><p className="eyebrow">BIENVENIDO</p><h2>Iniciar sesión</h2><p className="muted">Ingresa con la cuenta que creó la administración.</p>{error && <Notice message={error} type="error" onClose={() => setError('')}/>}<label>Correo electrónico<input data-testid="login-correo" autoComplete="username" type="email" value={correo} onChange={e=>setCorreo(e.target.value)} placeholder="usuario@empresa.com" required /></label><label>Contraseña<input data-testid="login-password" autoComplete="current-password" type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Tu contraseña" required /></label><button className="btn primary full" data-testid="login-submit" disabled={loading}>{loading ? 'Validando…' : 'Ingresar'}<ChevronRight size={18}/></button><p className="tiny muted">Acceso restringido a personal autorizado.</p></form></div></div>;
+}
+
+export default Login;

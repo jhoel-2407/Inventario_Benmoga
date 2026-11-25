@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Inventario BENMOGA</string>
+
+    <string name="settings_title">Servidor</string>
+    <string name="settings_url_hint">http://192.168.1.50:3000</string>
+    <string name="settings_help_title">Dirección del servidor</string>
+    <string name="settings_help">Escribe la IP de la PC donde corre el backend (la muestra la consola al iniciar). El celular y el Zebra deben estar en la misma red Wi‑Fi. Ejemplo: http://192.168.1.50:3000\n\nPara entrar desde otra red o con datos móviles, pega el enlace del túnel (https://…trycloudflare.com) que muestra «tunel-web» en la PC; aquí no hace falta puerto.</string>
+    <string name="settings_detect">Buscar en la red</string>
+    <string name="settings_test">Probar conexión</string>
+    <string name="settings_save">Guardar</string>
+    <string name="settings_cancel">Cancelar</string>
+    <string name="settings_examples">Si no funciona: confirma que el backend esté encendido, que ejecutaste “abrir-firewall-red” en la PC y que no es la red de invitados.</string>
+    <string name="detect_searching">Buscando el servidor en la red %1$s…</string>
+    <string name="detect_found">Servidor encontrado: %1$s</string>
+    <string name="detect_none">No se encontró ningún servidor. Revisa la IP o escríbela a mano.</string>
+    <string name="detect_sin_ip">No se pudo obtener la IP del dispositivo. Verifica la conexión Wi‑Fi.</string>
+    <string name="test_testing">Probando conexión…</string>
+    <string name="test_testing_dir">Probando %1$s…</string>
+    <string name="test_ok">Conexión correcta con el servidor.</string>
+    <string name="test_fail">No se pudo conectar. Revisa la dirección (la IP con http:// y :3000, o el enlace https:// del túnel), que el backend esté encendido y, si es la IP, la misma Wi‑Fi.</string>
+    <string name="settings_https">Usar cámara (HTTPS)</string>
+    <string name="settings_https_listo">Listo para la cámara. Pulsa Probar o Guardar.</string>
+    <string name="menu_refresh">Actualizar</string>
+    <string name="menu_server">Servidor</string>
+    <string name="menu_diag">Diagnóstico</string>
+    <string name="blank_title">La aplicación no se dibujó</string>
+    <string name="blank_message">La página se abrió (conexión correcta) pero la aplicación no se dibujó.\n\nWebView del equipo: %1$s\nDetalle: %2$s\n\nEsto ocurre cuando el WebView del equipo es antiguo. Solución: actualiza “Android System WebView” y “Chrome” desde Play Store, o reinicia el equipo.</string>
+    <string name="error_title">No se pudo conectar</string>
+    <string name="error_message">No se encontró el servidor en:\n%1$s\n\nVerifica que la PC tenga el backend encendido, que ambos estén en la misma red Wi‑Fi y que la dirección sea la correcta.</string>
+    <string name="error_retry">Reintentar</string>
+    <string name="error_change">Cambiar servidor</string>
+    <string name="toast_configure">Configura la dirección del servidor para empezar.</string>
+</resources>

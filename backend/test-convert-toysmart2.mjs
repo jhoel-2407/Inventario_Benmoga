@@ -1,0 +1,26 @@
+import fs from "node:fs";
+import { convertirStockAMaestra } from "./src/services/stock-converter.service.js";
+const buf = fs.readFileSync("D:/SENA-PRACTICAS/PRACTICAS 1/App3/levis-inventario-completo/docs/stok mes noviembre 2026.xlsx");
+const archivo = { name: "stok mes noviembre 2026.xlsx", data: buf };
+const result = await convertirStockAMaestra(archivo);
+console.log("productos:", result.productos);
+import * as XLSX from "xlsx";
+const wb = XLSX.read(result.buffer, { type: "buffer" });
+console.log("sheets:", wb.SheetNames);
+const inv = wb.Sheets["INVENTARIO"];
+const rows = XLSX.utils.sheet_to_json(inv, { header: 1 });
+console.log("INVENTARIO rows:", rows.length, "cols:", rows[0]?.length);
+console.log("headers:", JSON.stringify(rows[0]));
+console.log("row2:", JSON.stringify(rows[1]));
+console.log("row3:", JSON.stringify(rows[2]));
+// Check LECTURA formulas
+import ExcelJS from "exceljs";
+const eb = new ExcelJS.Workbook();
+await eb.xlsx.load(result.buffer);
+const lec = eb.getWorksheet("LECTURA");
+console.log("LECTURA row2:", JSON.stringify(lec.getRow(2).values));
+const zon = eb.getWorksheet("ZONAS");
+console.log("ZONAS row2:", JSON.stringify(zon.getRow(2).values));
+console.log("ZONAS row3:", JSON.stringify(zon.getRow(3).values));
+fs.writeFileSync("test-converted-toysmart2.xlsx", result.buffer);
+console.log("saved");

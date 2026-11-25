@@ -1,0 +1,16 @@
+# Dependencias (se instalan con npm install)
+node_modules/
+
+# Variables de entorno (nunca deben versionarse)
+.env
+backend/.env
+frontend/.env
+
+# Artefactos de las pruebas E2E (se generan en cada corrida)
+frontend/cypress/screenshots/
+frontend/cypress/videos/
+frontend/cypress/results/
+frontend/cypress/downloads/
+
+# Archivos temporales de Word/Office
+~$*

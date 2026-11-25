@@ -1,0 +1,34 @@
+{
+  "name": "levis-inventario-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "e2e:datos": "node ../backend/scripts/seed-pruebas.js",
+    "e2e:fixture": "node ../backend/scripts/generar-maestro-pruebas.js",
+    "e2e:build": "vite build",
+    "e2e:servidor": "node ../backend/scripts/e2e-server.mjs",
+    "e2e:abrir": "cypress open",
+    "e2e:correr": "cypress run",
+    "e2e:simular": "node ../backend/scripts/simular-escaneos.js",
+    "test:e2e": "npm run e2e:datos && npm run e2e:fixture && npm run e2e:build && start-server-and-test e2e:servidor http://localhost:3100/api/health e2e:correr",
+    "test:e2e:abrir": "npm run e2e:datos && npm run e2e:fixture && npm run e2e:build && start-server-and-test e2e:servidor http://localhost:3100/api/health e2e:abrir"
+  },
+  "dependencies": {
+    "@zxing/browser": "^0.1.5",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "cypress": "^14.5.4",
+    "exceljs": "^4.4.0",
+    "start-server-and-test": "^2.1.5",
+    "vite": "^6.0.7"
+  }
+}
