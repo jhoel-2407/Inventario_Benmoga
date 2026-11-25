@@ -19,12 +19,12 @@ const headerToField = (h) => {
   const n = normalizar(h);
   if (/^zona/.test(n)) return "zona";
   if (/codigo.*barr|cod.*barr|barcode|plu|barras?/.test(n)) return "codigo";
+  if (/talla|medida|size|detalle ext 2|detalle ext. 2/.test(n)) return "talla";
+  if (/color|colour|detalle ext 1|detalle ext. 1/.test(n) && !/empleado/.test(n)) return "colorProd";
   if (/descripcion|desc/.test(n)) return "desc";
   if (/codigo.*articulo|id.*articulo|item/.test(n)) return "item";
   if (/genero|sexo/.test(n)) return "genero";
   if (/linea|estilo|familia|tipo/.test(n)) return "linea";
-  if (/talla|medida|size/.test(n)) return "talla";
-  if (/color|colour/.test(n) && !/empleado/.test(n)) return "colorProd";
   if (/empleado/.test(n)) return "empleado";
   if (/fecha/.test(n)) return "fecha";
   return null;
@@ -184,13 +184,8 @@ export async function generarReporteExcel(id) {
     const codigoCol = invHeaders.findIndex((h) => headerToProductField(h) === "codigoBarras");
     if (codigoCol >= 0) {
       const code = prod?.codigoBarras || "";
-      if (/^\d{4,20}$/.test(String(code).trim())) {
-        row.getCell(codigoCol + 1).value = Number(code);
-        row.getCell(codigoCol + 1).numFmt = "0";
-      } else {
-        row.getCell(codigoCol + 1).value = String(code).trim();
-        row.getCell(codigoCol + 1).numFmt = "@";
-      }
+      row.getCell(codigoCol + 1).value = String(code).trim();
+      row.getCell(codigoCol + 1).numFmt = "@";
     }
   }
 
@@ -199,31 +194,31 @@ export async function generarReporteExcel(id) {
   // =====================================================================
   let hojaLecturas;
   let lecturaHeaders = [];
+  let isLecturaTemplate = false;
+  let tplScanWs = null;
   if (plantilla && tplWb) {
     const scanSheetName = tplWb.worksheets.map((w) => w.name).find((n) => {
       const nl = normalizar(n);
       return nl === "lectura" || nl === "escaneo" || nl === "esacneo";
     });
     if (scanSheetName) {
-      const tplWs = tplWb.getWorksheet(scanSheetName);
-      hojaLecturas = wb.addWorksheet(scanSheetName, { properties: tplWs.properties, pageSetup: tplWs.pageSetup });
-      tplWs.columns.forEach((col, i) => { if (col.width) hojaLecturas.getColumn(i + 1).width = col.width; });
-      // Copiar TODAS las filas (encabezado + fórmulas)
-      for (let r = 1; r <= tplWs.rowCount; r++) {
-        const tplRow = tplWs.getRow(r);
-        const newRow = hojaLecturas.getRow(r);
-        tplRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          const newCell = newRow.getCell(colNumber);
-          newCell.value = cell.value;
-          if (cell.style) newCell.style = JSON.parse(JSON.stringify(cell.style));
-          if (cell.font) newCell.font = JSON.parse(JSON.stringify(cell.font));
-          if (cell.fill) newCell.fill = JSON.parse(JSON.stringify(cell.fill));
-          if (cell.border) newCell.border = JSON.parse(JSON.stringify(cell.border));
-          if (cell.alignment) newCell.alignment = JSON.parse(JSON.stringify(cell.alignment));
-        });
-        newRow.height = tplRow.height;
-      }
-      const tplHeaderRow = tplWs.getRow(1);
+      tplScanWs = tplWb.getWorksheet(scanSheetName);
+      isLecturaTemplate = normalizar(scanSheetName) === "lectura";
+      hojaLecturas = wb.addWorksheet(scanSheetName, { properties: tplScanWs.properties, pageSetup: tplScanWs.pageSetup });
+      tplScanWs.columns.forEach((col, i) => { if (col.width) hojaLecturas.getColumn(i + 1).width = col.width; });
+      // Copiar solo el encabezado (fila 1) con estilos
+      const tplHeaderRow = tplScanWs.getRow(1);
+      const headerRow = hojaLecturas.getRow(1);
+      tplHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        const newCell = headerRow.getCell(colNumber);
+        newCell.value = cell.value;
+        if (cell.style) newCell.style = JSON.parse(JSON.stringify(cell.style));
+        if (cell.font) newCell.font = JSON.parse(JSON.stringify(cell.font));
+        if (cell.fill) newCell.fill = JSON.parse(JSON.stringify(cell.fill));
+        if (cell.border) newCell.border = JSON.parse(JSON.stringify(cell.border));
+        if (cell.alignment) newCell.alignment = JSON.parse(JSON.stringify(cell.alignment));
+      });
+      headerRow.height = tplHeaderRow.height;
       tplHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
         const v = String(cell.value ?? "").trim();
         if (v) lecturaHeaders[colNumber - 1] = v;
@@ -231,6 +226,9 @@ export async function generarReporteExcel(id) {
       lecturaHeaders = lecturaHeaders.filter((h) => h);
     }
   }
+  // Código de barras como texto (preservar ceros iniciales) en LECTURA
+  if (hojaLecturas && hojaLecturas.getColumn(2)) hojaLecturas.getColumn(2).numFmt = "@";
+
   if (!hojaLecturas) {
     hojaLecturas = wb.addWorksheet("Lectura");
     lecturaHeaders = ["Zona", "Código de barras", "Código artículo", "Género", "Línea", "Talla", "Color"];
@@ -246,6 +244,8 @@ export async function generarReporteExcel(id) {
     hojaLecturas.getRow(1).font = { bold: true };
     hojaLecturas.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFEFF3" } };
   }
+  // Código de barras como texto (preservar ceros iniciales)
+  if (hojaLecturas.getColumn(2)) hojaLecturas.getColumn(2).numFmt = "@";
 
   const posicionPorZona = new Map();
   const esBodega = (entry) => {
@@ -259,6 +259,54 @@ export async function generarReporteExcel(id) {
     const last = hojaLecturas.rowCount;
     for (let r = last; r >= 2; r--) hojaLecturas.spliceRows(r, 1);
   }
+
+  // Pre-compute INVENTARIO mapping (once, not per scan)
+  const invSheet = wb.getWorksheet(invSheetName);
+  const invRowMap = new Map();
+  if (invSheet) {
+    for (let r = 2; r <= invSheet.rowCount; r++) {
+      const code = invSheet.getRow(r).getCell(1).value;
+      const key = String(code ?? "").trim().replace(/^0+/, "");
+      if (key) invRowMap.set(key, r);
+    }
+  }
+  const invLastRow = invSheet?.rowCount || 2;
+  const invColCount = invSheet?.columnCount || 10;
+  const lastCol = String.fromCharCode(64 + (invColCount > 26 ? 26 : invColCount));
+
+  // Mapeo de columna LECTURA -> columna INVENTARIO (por encabezado normalizado)
+  const LEC_TO_INV = {
+    "zona": ["zona"],
+    "codigo": ["codigo barra", "codigo barras", "codigo de barras", "codigo de barra", "cod barras", "plu", "barcode", "codigo barras articulo", "codigobarra"],
+    "item": ["item", "id articulo", "codigo articulo", "codigo de articulo"],
+    "desc": ["desc item", "descripcion", "descripcion item", "nombre articulo", "nombre", "producto", "descrip corta", "descripcion corta"],
+    "genero": ["genero", "sexo"],
+    "linea": ["linea", "estilo", "tipo", "tipos de prenda", "familia", "categoria"],
+    "talla": ["talla", "detalle ext 2", "detalle ext. 2", "desc detalle ext 2", "desc. detalle ext. 2", "medida", "size"],
+    "colorProd": ["color", "colour", "detalle ext 1", "detalle ext. 1", "desc detalle ext 1", "desc. detalle ext. 1", "gdi libelle 1"],
+    "referencia": ["referencia", "ref"],
+  };
+  const headerToCanonical2 = (h) => {
+    const nh = normalizar(h);
+    for (const [field, syns] of Object.entries(LEC_TO_INV)) {
+      if (syns.some((s) => normalizar(s) === nh)) return field;
+    }
+    return headerToField(h);
+  };
+
+  const lecturaToInvCol = lecturaHeaders.map((h) => {
+    const nh = normalizar(h);
+    for (let j = 0; j < invHeaders.length; j++) {
+      if (normalizar(invHeaders[j]) === nh) return j + 1;
+    }
+    const lecField = headerToCanonical2(h);
+    if (!lecField) return null;
+    for (let j = 0; j < invHeaders.length; j++) {
+      const invField = headerToCanonical2(invHeaders[j]);
+      if (invField === lecField) return j + 1;
+    }
+    return null;
+  });
 
   let rowIndex = 2;
   for (const entry of lecturas) {
@@ -294,54 +342,31 @@ export async function generarReporteExcel(id) {
       const codigoCol = lecturaHeaders.findIndex((h) => headerToField(h) === "codigo");
       if (zonaCol >= 0) fila.getCell(zonaCol + 1).value = zona.numero;
       if (codigoCol >= 0) {
-        if (/^\d{4,20}$/.test(String(codigo).trim())) {
-          fila.getCell(codigoCol + 1).value = Number(codigo);
-          fila.getCell(codigoCol + 1).numFmt = "0";
-        } else {
-          fila.getCell(codigoCol + 1).value = String(codigo).trim();
-          fila.getCell(codigoCol + 1).numFmt = "@";
-        }
+        fila.getCell(codigoCol + 1).value = String(codigo).trim();
+        fila.getCell(codigoCol + 1).numFmt = "@";
       }
-      // Mapa de código -> fila de INVENTARIO (para cached results de VLOOKUP)
-      const invRowMap = new Map();
-      const invSheet = wb.getWorksheet(invSheetName);
-      if (invSheet) {
-        for (let r = 2; r <= invSheet.rowCount; r++) {
-          const code = invSheet.getRow(r).getCell(1).value;
-          const key = String(code ?? "").trim().replace(/^0+/, "");
-          if (key) invRowMap.set(key, r);
-        }
-      }
-
-      // Para cada columna con fórmula VLOOKUP, agregar cached result desde INVENTARIO
+      // Para cada columna (excepto zona y código), escribir VLOOKUP con cached result
       for (let c = 1; c <= hojaLecturas.columnCount; c++) {
+        const field = headerToField(lecturaHeaders[c - 1]);
+        if (field === "zona" || field === "codigo") continue;
+        const invCol = lecturaToInvCol[c - 1];
+        if (!invCol) continue;
         const cell = fila.getCell(c);
-        if (cell.value && typeof cell.value === "object" && cell.value.formula) {
-          const f = cell.value.formula;
-          const colMatch = f.match(/,(\d+),0\)/);
-          const colIdx = colMatch ? parseInt(colMatch[1]) : null;
+        if (esNov) {
+          cell.value = "N/A";
+        } else {
+          const invRow = invRowMap.get(String(codigo).trim().replace(/^0+/, ""));
           let result = null;
-          if (esNov) {
-            result = "N/A";
-          } else if (colIdx) {
-            const invRow = invRowMap.get(String(codigo).trim().replace(/^0+/, ""));
-            if (invRow) {
-              const invVal = invSheet.getRow(invRow).getCell(colIdx).value;
-              result = invVal !== null && invVal !== undefined ? invVal : null;
-            }
+          if (invRow) {
+            const invVal = invSheet.getRow(invRow).getCell(invCol).value;
+            result = invVal !== null && invVal !== undefined ? invVal : null;
           }
+          const sheetRef = invSheetName.includes(" ") ? `'${invSheetName}'` : invSheetName;
+          const formula = `VLOOKUP($B${rowIndex},${sheetRef}!$A$2:$${lastCol}$${invLastRow},${invCol},0)`;
           if (result !== null && result !== undefined) {
-            cell.value = { formula: cell.value.formula, result: result };
-          }
-        }
-      }
-      // Para N/A: sobrescribir las columnas de fórmula con "N/A" (sin fórmula)
-      if (esNov) {
-        for (let c = 1; c <= hojaLecturas.columnCount; c++) {
-          const h = lecturaHeaders[c - 1];
-          const field = headerToField(h);
-          if (field && field !== "zona" && field !== "codigo") {
-            fila.getCell(c).value = "N/A";
+            cell.value = { formula: formula, result: result };
+          } else {
+            cell.value = { formula: formula };
           }
         }
       }
@@ -380,6 +405,29 @@ export async function generarReporteExcel(id) {
     }
     rowIndex++;
   }
+
+  // Escribir fórmulas VLOOKUP en filas vacías (para que el usuario pueda agregar códigos manualmente)
+  const invSheet2 = wb.getWorksheet(invSheetName);
+  const invLastRow2 = invSheet2?.rowCount || 2;
+  const invColCount2 = invSheet2?.columnCount || 10;
+  const lastCol2 = String.fromCharCode(64 + (invColCount2 > 26 ? 26 : invColCount2));
+  const totalRows = Math.max(rowIndex - 1 + 50, 100);
+  for (let r = rowIndex; r <= totalRows; r++) {
+    const fila = hojaLecturas.getRow(r);
+    const isLectura = normalizar(scanSheetName) === "lectura";
+    if (isLectura) {
+      for (let c = 1; c <= hojaLecturas.columnCount; c++) {
+        const field = headerToField(lecturaHeaders[c - 1]);
+        if (field === "zona" || field === "codigo") continue;
+        const invCol = lecturaToInvCol ? lecturaToInvCol[c - 1] : c;
+        if (!invCol) continue;
+        const sheetRef2 = invSheetName.includes(" ") ? `'${invSheetName}'` : invSheetName;
+        const formula = `VLOOKUP($B${r},${sheetRef2}!$A$2:$${lastCol2}$${invLastRow2},${invCol},0)`;
+        fila.getCell(c).value = { formula };
+      }
+    }
+  }
+
   if (!lecturas.length) {
     hojaLecturas.addRow(lecturaHeaders.map(() => ""));
     hojaLecturas.getRow(hojaLecturas.rowCount).getCell(1).value = "Sin lecturas registradas";
@@ -638,14 +686,16 @@ export async function generarReporteExcel(id) {
     reescribirFormulasConDefinedNames(hojaLecturas, definedNames);
   }
   // Acotar rangos INVENTARIO!$A:$J -> INVENTARIO!$A$2:$J$N (mejor compatibilidad)
-  const invLastRow = wb.getWorksheet(invSheetName)?.rowCount || 2;
+  const invLastRowFinal = wb.getWorksheet(invSheetName)?.rowCount || 2;
   for (let r = 1; r <= hojaLecturas.rowCount; r++) {
     const row = hojaLecturas.getRow(r);
     row.eachCell({ includeEmpty: false }, (cell) => {
       if (cell.value && typeof cell.value === "object" && cell.value.formula) {
         const f = cell.value.formula;
-        const newF = f.replace(/INVENTARIO!\$A:\$J/g, `INVENTARIO!$A$2:$J$${invLastRow}`)
-                      .replace(/INVENTARIO!A:J/g, `INVENTARIO!$A$2:$J$${invLastRow}`);
+        const newF = f.replace(/INVENTARIO!\$A:\$J/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`)
+                      .replace(/INVENTARIO!A:J/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`)
+                      .replace(/INVENTARIO!\$\d+:\$\d+/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`)
+                      .replace(/INVENTARIO!\$A:\$\d+/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`);
         if (newF !== f) cell.value = { formula: newF, result: cell.value.result };
       }
     });

@@ -450,18 +450,99 @@ export async function convertirStockAMaestra(archivo, localId) {
 
   const camposNoMapeadosFinal = camposNoMapeados;
 
-  // Reescribir fórmulas que usan nombres definidos (COMPARATIVO, INVENTARIO, LEVIS, etc.)
-  // por referencias directas a la hoja INVENTARIO, ya que ExcelJS no preserva los
-  // nombres definidos correctamente.
-  const definedNames = await extraerDefinedNames(plantilla.contenido);
+  // Reconstruir la hoja LECTURA/escaneo desde cero para evitar problemas con
+  // fórmulas compartidas (shared formulas) que ExcelJS no escribe correctamente.
   const scanSheetName = tplWb.worksheets.map((w) => w.name).find((n) => {
     const nl = normalizar(n);
     return nl === "lectura" || nl === "escaneo" || nl === "esacneo";
   });
   if (scanSheetName) {
-    const ws = tplWb.getWorksheet(scanSheetName);
-    if (ws) reescribirFormulasConDefinedNames(ws, definedNames);
+    const tplWs = tplWb.getWorksheet(scanSheetName);
+    const isLectura = normalizar(scanSheetName) === "lectura";
+    const definedNames = await extraerDefinedNames(plantilla.contenido);
+
+    // Crear nueva hoja con el mismo nombre (reemplazar la vieja)
+    const oldId = tplWs.id;
+    tplWb.removeWorksheet(oldId);
+    const newWs = tplWb.addWorksheet(scanSheetName, { properties: tplWs.properties, pageSetup: tplWs.pageSetup });
+
+    // Copiar anchos de columna
+    tplWs.columns.forEach((col, i) => {
+      if (col.width) newWs.getColumn(i + 1).width = col.width;
+    });
+
+    // Código de barras como texto (preservar ceros iniciales)
+    newWs.getColumn(2).numFmt = "@";
+
+    // Copiar encabezado (fila 1)
+    const tplHeaderRow = tplWs.getRow(1);
+    const newHeaderRow = newWs.getRow(1);
+    tplHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const nc = newHeaderRow.getCell(colNumber);
+      nc.value = cell.value;
+      if (cell.style) nc.style = JSON.parse(JSON.stringify(cell.style));
+      if (cell.font) nc.font = JSON.parse(JSON.stringify(cell.font));
+      if (cell.fill) nc.fill = JSON.parse(JSON.stringify(cell.fill));
+      if (cell.border) nc.border = JSON.parse(JSON.stringify(cell.border));
+      if (cell.alignment) nc.alignment = JSON.parse(JSON.stringify(cell.alignment));
+    });
+    newHeaderRow.height = tplHeaderRow.height;
+
+    // Detectar headers
+    const headers = [];
+    tplHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const v = String(cell.value ?? "").trim();
+      if (v) headers[colNumber - 1] = v;
+    });
+    const realHeaders = headers.filter((h) => h);
+
+    if (isLectura) {
+      // Escribir fórmulas VLOOKUP (regulares, no compartidas) para filas 2..N
+      // N = número de productos del INVENTARIO + 1 (para dejar margen)
+      const invSheet = tplWb.getWorksheet(tplWb.worksheets.map((w) => w.name).find((n) => normalizar(n) === "inventario"));
+      const invLastRow = invSheet ? invSheet.rowCount : 2;
+      const invColCount = invSheet ? invSheet.columnCount : 10;
+      const lastCol = String.fromCharCode(64 + (invColCount > 26 ? 26 : invColCount));
+      // Detectar headers de INVENTARIO
+      const invHeaders = [];
+      if (invSheet) {
+        const invHeaderRow = invSheet.getRow(1);
+        invHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          const v = String(cell.value ?? "").trim();
+          if (v) invHeaders[colNumber - 1] = v;
+        });
+      }
+
+      // Mapeo de columna LECTURA -> columna INVENTARIO (por encabezado normalizado)
+      const lecturaToInvCol = realHeaders.map((h) => {
+        const nh = normalizar(h);
+        for (let j = 0; j < invHeaders.length; j++) {
+          if (normalizar(invHeaders[j]) === nh) return j + 1;
+        }
+        return null;
+      });
+
+      const numRows = Math.max(tplWs.rowCount, 100);
+      for (let r = 2; r <= numRows; r++) {
+        const row = newWs.getRow(r);
+        for (let c = 1; c <= realHeaders.length; c++) {
+          const invCol = lecturaToInvCol[c - 1];
+          if (invCol === null || invCol === undefined) continue;
+          if (c === 1 || c === 2) continue; // zona y código son inputs
+          const sheetRef = invSheetName.includes(" ") ? `'${invSheetName}'` : invSheetName;
+          const formula = `VLOOKUP($B${r},${sheetRef}!$A$2:$${lastCol}$${invLastRow},${invCol},0)`;
+          row.getCell(c).value = { formula };
+        }
+      }
+    }
+    // Para escaneo (plano): no escribir fórmulas, solo headers (las filas se llenan al escanear)
+
+    // Forzar recálculo
+    tplWb.calcProperties = { fullCalcOnLoad: true };
   }
+
+  // Forzar recálculo al abrir en Excel
+  tplWb.calcProperties = { fullCalcOnLoad: true };
 
   const buffer = await tplWb.xlsx.writeBuffer();
   return {
