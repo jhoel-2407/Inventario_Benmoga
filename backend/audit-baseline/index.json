@@ -1,0 +1,26 @@
+[
+  {
+    "nombre": "pilatos-accesorios",
+    "id": 216,
+    "bytes": 145305,
+    "sha": "7ad4fd17e778f795"
+  },
+  {
+    "nombre": "superdry",
+    "id": 211,
+    "bytes": 112712,
+    "sha": "f6c5c341a1d8788f"
+  },
+  {
+    "nombre": "toysmart",
+    "id": 194,
+    "bytes": 149955,
+    "sha": "69ccfbdc5f6d83d4"
+  },
+  {
+    "nombre": "polito",
+    "id": 192,
+    "bytes": 138457,
+    "sha": "37a0024a1c76bdad"
+  }
+]

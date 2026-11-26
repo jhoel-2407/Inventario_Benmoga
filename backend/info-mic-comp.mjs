@@ -1,0 +1,14 @@
+import { PrismaClient } from "@prisma/client";
+import { comparativoDeInventario } from "./src/services/comparativo.service.js";
+const p = new PrismaClient();
+const inv = await p.inventario.findFirst({ where: { localId: 10, estado: "ACTIVO" }, orderBy: { id: "desc" } });
+const c = await comparativoDeInventario(inv.id);
+console.log("keys:", Object.keys(c));
+const prods = c.productos || [];
+console.log("productos:", prods.length, "sinConteo:", c.resumen?.sinConteo, "faltantes:", c.resumen?.faltantes, "sobrantes:", c.resumen?.sobrantes, "ok:", c.resumen?.ok);
+const vacios = prods.filter((x) => !x.codigoBarras);
+console.log("productos con codigoBarras vacio:", vacios.length, vacios.slice(0, 5));
+const prodRef = c.productosPorReferencia || [];
+const vaciosRef = prodRef.filter((x) => !x.referencia);
+console.log("porReferencia:", prodRef.length, "sin referencia:", vaciosRef.length);
+await p.$disconnect();

@@ -2,6 +2,9 @@ import ExcelJS from "exceljs";
 import { prisma } from "../lib/prisma.js";
 import { argb, colorDeUsuario, tinteSuave } from "../lib/colores.js";
 import { extraerDefinedNames, reescribirFormulasConDefinedNames } from "../lib/definedNames.js";
+import { colLetter, codeText, codeKeys, safeResult, formulaVLOOKUP } from "../lib/xlsxRefs.js";
+import { leerSpecScan } from "../lib/scanSpec.js";
+import { leerPlantillaLigera } from "../lib/plantillaLigera.js";
 
 function errorConEstado(mensaje, status) {
   const error = new Error(mensaje);
@@ -21,10 +24,15 @@ const headerToField = (h) => {
   if (/codigo.*barr|cod.*barr|barcode|plu|barras?/.test(n)) return "codigo";
   if (/talla|medida|size|detalle ext 2|detalle ext. 2/.test(n)) return "talla";
   if (/color|colour|detalle ext 1|detalle ext. 1/.test(n) && !/empleado/.test(n)) return "colorProd";
-  if (/descripcion|desc/.test(n)) return "desc";
+  if (/descripcion|desc|nombre.*articulo|nombre producto/.test(n)) return "desc";
   if (/codigo.*articulo|id.*articulo|item/.test(n)) return "item";
   if (/genero|sexo/.test(n)) return "genero";
   if (/linea|estilo|familia|tipo/.test(n)) return "linea";
+  if (/referencia|ref\b|^ref/.test(n)) return "referencia";
+  if (/sub grupo|subgrupo|marca|departamento/.test(n)) return "subGrupo";
+  if (/precio/.test(n)) return "precio";
+  if (/iva/.test(n)) return "iva";
+  if (/estado/.test(n)) return "estado";
   if (/empleado/.test(n)) return "empleado";
   if (/fecha/.test(n)) return "fecha";
   return null;
@@ -35,7 +43,7 @@ const headerToProductField = (h) => {
   if (/codigo.*barr|cod.*barr|barcode|plu|barras?/.test(n)) return "codigoBarras";
   if (/talla|medida|size|detalle ext 2|detalle ext. 2/.test(n)) return "detalle1";
   if (/color|colour|detalle ext 1|detalle ext. 1/.test(n)) return "detalle2";
-  if (/descripcion|desc/.test(n)) return "descripcion";
+  if (/descripcion|desc|nombre.*articulo|nombre producto/.test(n)) return "descripcion";
   if (/codigo.*articulo|id.*articulo|item/.test(n)) return "item";
   if (/existencia|fisica|stock|cantidad|dispon/.test(n)) return "existenciaInicial";
   if (/linea|estilo|familia|tipo/.test(n)) return "estilo";
@@ -108,8 +116,9 @@ export async function generarReporteExcel(id) {
   let invSheetName = "INVENTARIO";
   let tplWb = null;
   if (plantilla) {
-    tplWb = new ExcelJS.Workbook();
-    await tplWb.xlsx.load(plantilla.contenido);
+    // Solo se necesitan encabezados y algunos valores de la plantilla: cargarla
+    // completa con ExcelJS agotaba la memoria en maestras con 100k fórmulas.
+    tplWb = await leerPlantillaLigera(plantilla.contenido);
     const found = tplWb.worksheets.map((w) => w.name).find((n) => normalizar(n) === "inventario");
     if (found) invSheetName = found;
   }
@@ -119,7 +128,7 @@ export async function generarReporteExcel(id) {
   if (plantilla && tplWb) {
     const tplInv = tplWb.getWorksheet(invSheetName);
     if (tplInv) {
-      tplInv.columns.forEach((col, i) => { if (col.width) newInv.getColumn(i + 1).width = col.width; });
+      if (tplInv.columns) tplInv.columns.forEach((col, i) => { if (col.width) newInv.getColumn(i + 1).width = col.width; });
       const tplHeaderRow = tplInv.getRow(1);
       const newHeaderRow = newInv.getRow(1);
       tplHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
@@ -152,28 +161,38 @@ export async function generarReporteExcel(id) {
     if (tplInv) {
       for (let r = 2; r <= tplInv.rowCount; r++) {
         const code = tplInv.getRow(r).getCell(1).value;
-        const key = String(code ?? "").trim().replace(/^0+/, "");
-        if (key) tplInvMap.set(key, tplInv.getRow(r));
+        for (const key of codeKeys(code)) tplInvMap.set(key, tplInv.getRow(r));
       }
     }
   }
 
   const fontBase = { name: "Verdana", size: 10, family: 2, color: { indexed: 8 } };
+  // Código de barras principal = primera columna con encabezado de barras.
+  // Las demás columnas de barras (p. ej. "Cód. Barras", "Cód. Barras 2") son
+  // atributos independientes: se copian de esa misma columna de la maestra y
+  // nunca se rellenan con el código principal.
+  const codigoColIdx = invHeaders.findIndex((h) => headerToProductField(h) === "codigoBarras");
   for (const ip of invProds) {
     const prod = ip.producto;
-    const code = prod?.codigoBarras || "";
-    const codeKey = String(code).trim().replace(/^0+/, "");
-    const tplRow = tplInvMap.get(codeKey);
-    const values = invHeaders.map((h) => {
+    const code = codeText(prod?.codigoBarras);
+    const tplRow = codeKeys(code).map((k) => tplInvMap.get(k)).find(Boolean);
+    const values = invHeaders.map((h, colIdx) => {
       const field = headerToProductField(h);
-      if (field === "codigoBarras") return null; // se asigna abajo
+      if (field === "codigoBarras") {
+        if (colIdx === codigoColIdx) return null; // se asigna abajo
+        // Barras secundarias: solo el valor de esta misma columna en la maestra.
+        if (tplRow) {
+          const tplVal = tplRow.getCell(colIdx + 1).value;
+          if (tplVal !== null && tplVal !== undefined && String(tplVal).trim() !== "") return tplVal;
+        }
+        return null;
+      }
       if (field) {
         const v = ip[field] ?? prod?.[field] ?? null;
         if (v !== null && v !== undefined && String(v).trim() !== "") return v;
       }
       // Completar desde la plantilla si el campo no está en BD
       if (tplRow) {
-        const colIdx = invHeaders.indexOf(h);
         const tplVal = tplRow.getCell(colIdx + 1).value;
         if (tplVal !== null && tplVal !== undefined && String(tplVal).trim() !== "") return tplVal;
       }
@@ -181,12 +200,17 @@ export async function generarReporteExcel(id) {
     });
     const row = newInv.addRow(values);
     row.font = fontBase;
-    const codigoCol = invHeaders.findIndex((h) => headerToProductField(h) === "codigoBarras");
-    if (codigoCol >= 0) {
+    if (codigoColIdx >= 0) {
       const code = prod?.codigoBarras || "";
-      row.getCell(codigoCol + 1).value = String(code).trim();
-      row.getCell(codigoCol + 1).numFmt = "@";
+      row.getCell(codigoColIdx + 1).value = codeText(code);
+      row.getCell(codigoColIdx + 1).numFmt = "@";
     }
+    // Preservar el formato de texto en las barras secundarias (ceros iniciales).
+    invHeaders.forEach((h, colIdx) => {
+      if (colIdx !== codigoColIdx && headerToProductField(h) === "codigoBarras") {
+        row.getCell(colIdx + 1).numFmt = "@";
+      }
+    });
   }
 
   // =====================================================================
@@ -205,7 +229,7 @@ export async function generarReporteExcel(id) {
       tplScanWs = tplWb.getWorksheet(scanSheetName);
       isLecturaTemplate = normalizar(scanSheetName) === "lectura";
       hojaLecturas = wb.addWorksheet(scanSheetName, { properties: tplScanWs.properties, pageSetup: tplScanWs.pageSetup });
-      tplScanWs.columns.forEach((col, i) => { if (col.width) hojaLecturas.getColumn(i + 1).width = col.width; });
+      if (tplScanWs.columns) tplScanWs.columns.forEach((col, i) => { if (col.width) hojaLecturas.getColumn(i + 1).width = col.width; });
       // Copiar solo el encabezado (fila 1) con estilos
       const tplHeaderRow = tplScanWs.getRow(1);
       const headerRow = hojaLecturas.getRow(1);
@@ -254,59 +278,44 @@ export async function generarReporteExcel(id) {
   };
 
   const scanSheetName = hojaLecturas.name;
-  const isEscaneo = normalizar(scanSheetName) === "escaneo";
-  if (isEscaneo) {
-    const last = hojaLecturas.rowCount;
-    for (let r = last; r >= 2; r--) hojaLecturas.spliceRows(r, 1);
-  }
 
-  // Pre-compute INVENTARIO mapping (once, not per scan)
+  // Estructura real de la plantilla: columna de código, columna de inicio de la
+  // tabla de búsqueda y columnas que deben llevar VLOOKUP.
+  const spec = tplWb ? leerSpecScan(tplWb, invSheetName, 1, invHeaders) : null;
+  const codeCol = spec?.codeCol || 2;
+  const zonaCol = spec?.zonaCol || 1;
+  if (hojaLecturas.getColumn(codeCol)) hojaLecturas.getColumn(codeCol).numFmt = "@";
+
   const invSheet = wb.getWorksheet(invSheetName);
   const invRowMap = new Map();
   if (invSheet) {
+    const lookupCol = spec?.lookupCol || 1;
     for (let r = 2; r <= invSheet.rowCount; r++) {
-      const code = invSheet.getRow(r).getCell(1).value;
-      const key = String(code ?? "").trim().replace(/^0+/, "");
-      if (key) invRowMap.set(key, r);
+      const code = invSheet.getRow(r).getCell(lookupCol).value;
+      for (const key of codeKeys(code)) invRowMap.set(key, r);
     }
   }
   const invLastRow = invSheet?.rowCount || 2;
-  const invColCount = invSheet?.columnCount || 10;
-  const lastCol = String.fromCharCode(64 + (invColCount > 26 ? 26 : invColCount));
+  const columnas = spec?.columnas || new Map();
 
-  // Mapeo de columna LECTURA -> columna INVENTARIO (por encabezado normalizado)
-  const LEC_TO_INV = {
-    "zona": ["zona"],
-    "codigo": ["codigo barra", "codigo barras", "codigo de barras", "codigo de barra", "cod barras", "plu", "barcode", "codigo barras articulo", "codigobarra"],
-    "item": ["item", "id articulo", "codigo articulo", "codigo de articulo"],
-    "desc": ["desc item", "descripcion", "descripcion item", "nombre articulo", "nombre", "producto", "descrip corta", "descripcion corta"],
-    "genero": ["genero", "sexo"],
-    "linea": ["linea", "estilo", "tipo", "tipos de prenda", "familia", "categoria"],
-    "talla": ["talla", "detalle ext 2", "detalle ext. 2", "desc detalle ext 2", "desc. detalle ext. 2", "medida", "size"],
-    "colorProd": ["color", "colour", "detalle ext 1", "detalle ext. 1", "desc detalle ext 1", "desc. detalle ext. 1", "gdi libelle 1"],
-    "referencia": ["referencia", "ref"],
-  };
-  const headerToCanonical2 = (h) => {
-    const nh = normalizar(h);
-    for (const [field, syns] of Object.entries(LEC_TO_INV)) {
-      if (syns.some((s) => normalizar(s) === nh)) return field;
+  // Columnas de la hoja de escaneo sin mapeo a la INVENTARIO (p. ej. "Ref." en
+  // Naf Naf, cuando el inventario no tiene columna "Referencia" sino "Código
+  // artículo"). En esos casos el dato referencial ES el código buscado, así que se
+  // mapea contra la columna canónica `item` ("Código artículo") disponible.
+  const columnasExtra = new Map();
+  if (spec) {
+    const usados = new Set([spec.lookupCol, ...spec.columnas.values()]);
+    for (let i = 0; i < spec.headers.length; i++) {
+      const col = i + 1;
+      if (col === spec.zonaCol || col === spec.codeCol || spec.columnas.has(col)) continue;
+      const campo = headerToField(spec.headers[i]);
+      if (campo !== "referencia") continue;
+      const invCol = invHeaders.findIndex((h, j) => !usados.has(j + 1) && headerToProductField(h) === "item") + 1;
+      if (invCol) { usados.add(invCol); columnasExtra.set(col, invCol); }
     }
-    return headerToField(h);
-  };
-
-  const lecturaToInvCol = lecturaHeaders.map((h) => {
-    const nh = normalizar(h);
-    for (let j = 0; j < invHeaders.length; j++) {
-      if (normalizar(invHeaders[j]) === nh) return j + 1;
-    }
-    const lecField = headerToCanonical2(h);
-    if (!lecField) return null;
-    for (let j = 0; j < invHeaders.length; j++) {
-      const invField = headerToCanonical2(invHeaders[j]);
-      if (invField === lecField) return j + 1;
-    }
-    return null;
-  });
+  }
+  const columnasManuales = new Map(columnas);
+  for (const [colScan, colInv] of columnasExtra) if (!columnasManuales.has(colScan)) columnasManuales.set(colScan, colInv);
 
   let rowIndex = 2;
   for (const entry of lecturas) {
@@ -316,78 +325,65 @@ export async function generarReporteExcel(id) {
     const codigo = esNov ? entry.n.codigoLeido : entry.e.codigoLeido;
     const hex = colorDeUsuario(usuario);
 
-    let genero = "", linea = "", talla = "", colorProd = "", item = "", desc = "";
+    let genero = "", linea = "", talla = "", colorProd = "", item = "", desc = "", referencia = "", subGrupo = "";
     if (esNov) {
       desc = "N/A"; genero = "N/A"; linea = "N/A"; talla = "N/A"; colorProd = "N/A"; item = "N/A";
+      referencia = "N/A"; subGrupo = "N/A";
     } else {
       const ip = entry.e.inventarioProducto;
-      if (ip?.descriptoresCargados) {
-        item = ip.item || ""; desc = ip.descripcion || ""; genero = ip.genero || "";
-        linea = ip.estilo || ""; talla = ip.detalle1 || ""; colorProd = ip.detalle2 || "";
-      } else {
-        const prod = ip?.producto;
-        item = prod?.item || ip?.item || ""; desc = prod?.descripcion || ip?.descripcion || "";
-        genero = prod?.genero || ip?.genero || ""; linea = prod?.estilo || ip?.estilo || "";
-        talla = prod?.detalle1 || ip?.detalle1 || ""; colorProd = prod?.detalle2 || ip?.detalle2 || "";
-      }
+      const prod = ip?.producto;
+      item = (ip?.descriptoresCargados ? ip.item : prod?.item ?? ip?.item) || "";
+      desc = (ip?.descriptoresCargados ? ip.descripcion : prod?.descripcion ?? ip?.descripcion) || "";
+      genero = (ip?.descriptoresCargados ? ip.genero : prod?.genero ?? ip?.genero) || "";
+      linea = (ip?.descriptoresCargados ? ip.estilo : prod?.estilo ?? ip?.estilo) || "";
+      talla = (ip?.descriptoresCargados ? ip.detalle1 : prod?.detalle1 ?? ip?.detalle1) || "";
+      colorProd = (ip?.descriptoresCargados ? ip.detalle2 : prod?.detalle2 ?? ip?.detalle2) || "";
+      referencia = (ip?.descriptoresCargados ? ip.referencia : prod?.referencia ?? ip?.referencia) || "";
+      subGrupo = (ip?.descriptoresCargados ? ip.subGrupo : prod?.subGrupo ?? ip?.subGrupo) || "";
     }
     const zid = esNov ? entry.n.zonaId : entry.e.zonaId;
     const pos = (posicionPorZona.get(zid) || 0) + 1;
     posicionPorZona.set(zid, pos);
 
     const fila = hojaLecturas.getRow(rowIndex);
-    const isLectura = normalizar(scanSheetName) === "lectura";
-    if (isLectura) {
-      const zonaCol = lecturaHeaders.findIndex((h) => headerToField(h) === "zona");
-      const codigoCol = lecturaHeaders.findIndex((h) => headerToField(h) === "codigo");
-      if (zonaCol >= 0) fila.getCell(zonaCol + 1).value = zona.numero;
-      if (codigoCol >= 0) {
-        fila.getCell(codigoCol + 1).value = String(codigo).trim();
-        fila.getCell(codigoCol + 1).numFmt = "@";
-      }
-      // Para cada columna (excepto zona y código), escribir VLOOKUP con cached result
-      for (let c = 1; c <= hojaLecturas.columnCount; c++) {
-        const field = headerToField(lecturaHeaders[c - 1]);
-        if (field === "zona" || field === "codigo") continue;
-        const invCol = lecturaToInvCol[c - 1];
-        if (!invCol) continue;
-        const cell = fila.getCell(c);
-        if (esNov) {
-          cell.value = "N/A";
-        } else {
-          const invRow = invRowMap.get(String(codigo).trim().replace(/^0+/, ""));
-          let result = null;
-          if (invRow) {
-            const invVal = invSheet.getRow(invRow).getCell(invCol).value;
-            result = invVal !== null && invVal !== undefined ? invVal : null;
-          }
-          const sheetRef = invSheetName.includes(" ") ? `'${invSheetName}'` : invSheetName;
-          const formula = `VLOOKUP($B${rowIndex},${sheetRef}!$A$2:$${lastCol}$${invLastRow},${invCol},0)`;
-          if (result !== null && result !== undefined) {
-            cell.value = { formula: formula, result: result };
-          } else {
-            cell.value = { formula: formula };
-          }
-        }
-      }
-    } else {
-      const valores = {};
-      valores["zona"] = zona.numero;
-      valores["codigo"] = /^\d{4,20}$/.test(String(codigo).trim()) ? Number(codigo) : codigo;
-      valores["item"] = item;
-      valores["genero"] = genero;
-      valores["linea"] = linea;
-      valores["talla"] = talla;
-      valores["colorProd"] = colorProd;
-      const rowValues = lecturaHeaders.map((h) => {
-        const field = headerToField(h);
-        if (field && valores[field] !== undefined) return valores[field];
-        return null;
+    // Zona y código siempre son entrada del usuario (posiciones reales de la plantilla).
+    // Algunas plantillas (Toysmart) no tienen columna ZONA: zonaCol queda en 0.
+    if (zonaCol > 0) fila.getCell(zonaCol).value = zona.numero;
+    const celdaCodigo = fila.getCell(codeCol);
+    celdaCodigo.value = codeText(codigo); // como texto: sin Number() para códigos de 20 dígitos
+    celdaCodigo.numFmt = "@";
+
+    const invFila = codeKeys(codigo).map((k) => invRowMap.get(k)).find(Boolean);
+    for (const [colScan, colInv] of columnas) {
+      const cell = fila.getCell(colScan);
+      if (esNov) { cell.value = "N/A"; continue; }
+      const resultado = invFila ? safeResult(invSheet.getRow(invFila).getCell(colInv).value) : null;
+      const formula = formulaVLOOKUP({
+        codeCol,
+        row: rowIndex,
+        sheet: invSheetName,
+        tableStartCol: spec?.tableStartCol || 1,
+        tableEndCol: spec?.tableEndCol || invHeaders.length,
+        tableLastRow: invLastRow,
+        sourceCol: colInv,
       });
-      rowValues.forEach((v, i) => {
-        if (v !== null && v !== undefined) fila.getCell(i + 1).value = v;
-      });
+      cell.value = resultado !== null ? { formula, result: resultado } : { formula };
     }
+
+    // Columnas sin VLOOKUP (entrada manual o sin equivalente en INVENTARIO):
+    // conservar datos planos del escaneo, incluida la descripción.
+    const valores = {
+      zona: zona.numero,
+      codigo: codeText(codigo),
+      item, desc, genero, linea, talla, colorProd, referencia, subGrupo,
+    };
+    lecturaHeaders.forEach((h, i) => {
+      const col = i + 1;
+      if (col === zonaCol || col === codeCol || columnas.has(col)) return;
+      const field = headerToField(h);
+      const v = field ? valores[field] : undefined;
+      if (v !== undefined && v !== null && v !== "") fila.getCell(col).value = v;
+    });
 
     fila.font = fila.font || { name: "Calibri", size: 11 };
     // Toda la fila con el color del empleado
@@ -406,31 +402,24 @@ export async function generarReporteExcel(id) {
     rowIndex++;
   }
 
-  // Escribir fórmulas VLOOKUP en filas vacías (para que el usuario pueda agregar códigos manualmente)
-  const invSheet2 = wb.getWorksheet(invSheetName);
-  const invLastRow2 = invSheet2?.rowCount || 2;
-  const invColCount2 = invSheet2?.columnCount || 10;
-  const lastCol2 = String.fromCharCode(64 + (invColCount2 > 26 ? 26 : invColCount2));
+  // Filas listas para lectura manual: mismo mapeo y mismas posiciones que la plantilla.
+  // La fórmula incluye IF(codigo="","",...) para que las filas vacías no muestren #N/A.
   const totalRows = Math.max(rowIndex - 1 + 50, 100);
   for (let r = rowIndex; r <= totalRows; r++) {
     const fila = hojaLecturas.getRow(r);
-    const isLectura = normalizar(scanSheetName) === "lectura";
-    if (isLectura) {
-      for (let c = 1; c <= hojaLecturas.columnCount; c++) {
-        const field = headerToField(lecturaHeaders[c - 1]);
-        if (field === "zona" || field === "codigo") continue;
-        const invCol = lecturaToInvCol ? lecturaToInvCol[c - 1] : c;
-        if (!invCol) continue;
-        const sheetRef2 = invSheetName.includes(" ") ? `'${invSheetName}'` : invSheetName;
-        const formula = `VLOOKUP($B${r},${sheetRef2}!$A$2:$${lastCol2}$${invLastRow2},${invCol},0)`;
-        fila.getCell(c).value = { formula };
-      }
+    for (const [colScan, colInv] of columnasManuales) {
+      fila.getCell(colScan).value = {
+        formula: formulaVLOOKUP({
+          codeCol,
+          row: r,
+          sheet: invSheetName,
+          tableStartCol: spec?.tableStartCol || 1,
+          tableEndCol: spec?.tableEndCol || invHeaders.length,
+          tableLastRow: invLastRow,
+          sourceCol: colInv,
+        }),
+      };
     }
-  }
-
-  if (!lecturas.length) {
-    hojaLecturas.addRow(lecturaHeaders.map(() => ""));
-    hojaLecturas.getRow(hojaLecturas.rowCount).getCell(1).value = "Sin lecturas registradas";
   }
 
   hojaLecturas.getRow(1).font = { bold: true };
@@ -685,21 +674,9 @@ export async function generarReporteExcel(id) {
     const definedNames = await extraerDefinedNames(plantilla.contenido);
     reescribirFormulasConDefinedNames(hojaLecturas, definedNames);
   }
-  // Acotar rangos INVENTARIO!$A:$J -> INVENTARIO!$A$2:$J$N (mejor compatibilidad)
-  const invLastRowFinal = wb.getWorksheet(invSheetName)?.rowCount || 2;
-  for (let r = 1; r <= hojaLecturas.rowCount; r++) {
-    const row = hojaLecturas.getRow(r);
-    row.eachCell({ includeEmpty: false }, (cell) => {
-      if (cell.value && typeof cell.value === "object" && cell.value.formula) {
-        const f = cell.value.formula;
-        const newF = f.replace(/INVENTARIO!\$A:\$J/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`)
-                      .replace(/INVENTARIO!A:J/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`)
-                      .replace(/INVENTARIO!\$\d+:\$\d+/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`)
-                      .replace(/INVENTARIO!\$A:\$\d+/g, `INVENTARIO!$A$2:$J$${invLastRowFinal}`);
-        if (newF !== f) cell.value = { formula: newF, result: cell.value.result };
-      }
-    });
-  }
+  // Nota: las fórmulas se generan directamente con rangos acotados y nombres de
+  // hoja entre comillas cuando hace falta; no se reescriben después (eso antes
+  // producía referencias corruptas como INVENTARIO!$A:$D!$A$2:$D$N).
 
   return {
     nombre: `lecturas-${inventario.localId}-${id}.xlsx`,

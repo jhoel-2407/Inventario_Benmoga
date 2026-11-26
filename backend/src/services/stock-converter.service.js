@@ -2,12 +2,14 @@ import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import { prisma } from "../lib/prisma.js";
 import { extraerDefinedNames, reescribirFormulasConDefinedNames } from "../lib/definedNames.js";
+import { colLetter, codeText, formulaVLOOKUP } from "../lib/xlsxRefs.js";
+import { leerSpecScan, campoDeHeader } from "../lib/scanSpec.js";
 
 // ============================================================================
 // Sinónimos para detectar columnas del archivo STOCK (normalizados).
 // ============================================================================
 const SINONIMOS_STOCK = {
-  codigo: ["codigo barra principal", "codigo de barras", "codigo barra", "codigo barras", "codigobarra", "codigobarras", "codigo", "cod barra", "cod barras", "barcode", "ean", "upc", "plu", "codigo alterno", "cod alterno", "codigo de barra"],
+  codigo: ["codigo barra principal", "codigo de barras", "codigo barra", "codigo barras", "codigobarra", "codigobarras", "codigo", "cod barra", "cod barras", "cod barras 3", "cod barras3", "cod barras 2", "codigo barras 3", "codigo barras3", "codigo barras 2", "barcode", "ean", "upc", "plu", "codigo alterno", "cod alterno", "codigo de barra"],
   referencia: ["referencia", "ref", "ref producto", "codigo referencia", "referenciaproveedor", "referencia proveedor"],
   item: ["item", "codigo item", "cod item", "id item", "item producto", "idarticulo", "id articulo", "codigo articulo", "codigo de articulo", "cod articulo", "codigo producto", "sku", "id articulo"],
   desc: ["desc item", "descripcion", "descripcion item", "descripcion producto", "desc producto", "nombre articulo", "nombre del articulo", "nombre producto", "nombre", "producto", "detalle", "detalle producto", "descripcion articulo", "descrip corta", "descripcion corta", "desc corta", "descripcioncorta", "descripcion corta"],
@@ -71,6 +73,13 @@ function detectarColumnasStock(headers) {
       if (hit !== undefined) { mapeo[campo] = hit; break; }
     }
   }
+  // Fallback para variantes no listadas (p. ej. "Cód. Barras 3" o
+  // "CODIGO_BARRA_ARTICULO"): la coincidencia canónica ya las reconoce.
+  if (mapeo.codigo === undefined) {
+    for (let i = 0; i < headers.length; i++) {
+      if (headerToCanonicalStock(headers[i]) === "codigo") { mapeo.codigo = i; break; }
+    }
+  }
   if (mapeo.existencia === undefined) {
     for (let i = 0; i < headers.length; i++) {
       if (i === mapeo.codigo) continue;
@@ -99,7 +108,6 @@ function headerToCanonicalStock(header) {
 
 function headerToCanonicalMaestra(header) {
   const n = normalizar(header);
-  if (ALIAS_MAESTRA_A_STOCK[n]) return null; // handled via alias path
   const checks = [
     ["codigo", ["codigo barra", "codigo barras", "codigo de barras", "codigo de barra", "codigo alterno", "cod alterno", "plu", "barcode", "ean", "upc", "cod barras", "barras", "codigo barras articulo", "codigo barra articulo", "codigo de barras ean"]],
     ["item", ["item", "codigo articulo", "codigo de articulo", "cod articulo", "codigo producto", "id articulo", "sku", "plu"]],
@@ -180,10 +188,10 @@ function mapearColumnasMaestraAStock(maestraHeaders, stockHeaders) {
   }
   for (const mc of mCols) {
     if (asignacion.has(mc.idx)) continue;
-    // canonical via alias or checks
-    let canon = null;
-    if (ALIAS_MAESTRA_A_STOCK[mc.norm]) canon = null; // alias already tried
-    else canon = headerToCanonicalMaestra(mc.header);
+    // Si el alias directo no encontró columna, se intenta el canónico. Antes se
+    // saltaba y una columna como "Cód. Barras 3" quedaba sin asignar, permitiendo
+    // que "Cód. Barras 2" se apropiara del código principal.
+    const canon = headerToCanonicalMaestra(mc.header);
     if (!canon) continue;
     const candidatos = stockPorCanonical.get(canon);
     if (candidatos && candidatos.length) {
@@ -350,7 +358,10 @@ export async function convertirStockAMaestra(archivo, localId) {
       // fallback a valores ya normalizados para campos conocidos
       const canon = stockIdxToCanonical.get(stockIdx) || headerToCanonicalStock(stockHeaders[stockIdx]);
       switch (canon) {
-        case "codigo": return p.codigoBarras;
+        // Solo la columna primaria puede usar el código normalizado. Las barras
+        // secundarias vacías deben quedar vacías: nunca se copia el código
+        // principal en "Cód. Barras" / "Cód. Barras 2".
+        case "codigo": return stockIdx === mapeoStock.codigo ? p.codigoBarras : null;
         case "item": return p.item;
         case "desc": return p.desc;
         case "existencia": return p.existencia;
@@ -384,6 +395,8 @@ export async function convertirStockAMaestra(archivo, localId) {
 
   const fontBase = { name: "Verdana", size: 10, family: 2, color: { indexed: 8 } };
   const maxCol = Math.max(...realIndices, 0);
+  // La columna de código de INVENTARIO no se asume en A: se detecta por encabezado.
+  const invCodigoCol = mCols.find((mc) => campoDeHeader(mc.header) === "codigo")?.idx || 1;
   for (const p of productos) {
     const values = new Array(maxCol + 1).fill(null);
     for (const mc of mCols) {
@@ -391,8 +404,8 @@ export async function convertirStockAMaestra(archivo, localId) {
     }
     const row = wsInv.addRow(values);
     row.font = fontBase;
-    // numFmt para código de barras (primera columna real)
-    row.getCell(1).numFmt = "@";
+    // Código como texto para conservar ceros iniciales (p. ej. Pilatos).
+    row.getCell(invCodigoCol).numFmt = "@";
   }
 
   // Hoja1: regenerar solo si es lookup Item -> Código barra
@@ -450,33 +463,27 @@ export async function convertirStockAMaestra(archivo, localId) {
 
   const camposNoMapeadosFinal = camposNoMapeados;
 
-  // Reconstruir la hoja LECTURA/escaneo desde cero para evitar problemas con
-  // fórmulas compartidas (shared formulas) que ExcelJS no escribe correctamente.
-  const scanSheetName = tplWb.worksheets.map((w) => w.name).find((n) => {
-    const nl = normalizar(n);
-    return nl === "lectura" || nl === "escaneo" || nl === "esacneo";
-  });
-  if (scanSheetName) {
-    const tplWs = tplWb.getWorksheet(scanSheetName);
-    const isLectura = normalizar(scanSheetName) === "lectura";
+  // Reconstruir la hoja de escaneo desde cero para evitar fórmulas compartidas
+  // (shared formulas) que ExcelJS no escribe correctamente. La especificación se
+  // deriva de la plantilla real: columna de código, columna de inicio de la tabla
+  // y columnas que originalmente tenían VLOOKUP (LECTURA vs ESCANEO).
+  const spec = leerSpecScan(tplWb, invSheetName, headerRowNum, invHeaders);
+  if (spec) {
+    const tplWs = tplWb.getWorksheet(spec.sheetName);
     const definedNames = await extraerDefinedNames(plantilla.contenido);
 
-    // Crear nueva hoja con el mismo nombre (reemplazar la vieja)
     const oldId = tplWs.id;
     tplWb.removeWorksheet(oldId);
-    const newWs = tplWb.addWorksheet(scanSheetName, { properties: tplWs.properties, pageSetup: tplWs.pageSetup });
+    const newWs = tplWb.addWorksheet(spec.sheetName, { properties: tplWs.properties, pageSetup: tplWs.pageSetup });
 
-    // Copiar anchos de columna
+    // Copiar anchos y encabezado conservando las posiciones físicas (no filtrar vacíos).
     tplWs.columns.forEach((col, i) => {
       if (col.width) newWs.getColumn(i + 1).width = col.width;
     });
+    newWs.getColumn(spec.codeCol).numFmt = "@";
 
-    // Código de barras como texto (preservar ceros iniciales)
-    newWs.getColumn(2).numFmt = "@";
-
-    // Copiar encabezado (fila 1)
-    const tplHeaderRow = tplWs.getRow(1);
-    const newHeaderRow = newWs.getRow(1);
+    const tplHeaderRow = tplWs.getRow(spec.headerRow);
+    const newHeaderRow = newWs.getRow(spec.headerRow);
     tplHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
       const nc = newHeaderRow.getCell(colNumber);
       nc.value = cell.value;
@@ -488,56 +495,29 @@ export async function convertirStockAMaestra(archivo, localId) {
     });
     newHeaderRow.height = tplHeaderRow.height;
 
-    // Detectar headers
-    const headers = [];
-    tplHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-      const v = String(cell.value ?? "").trim();
-      if (v) headers[colNumber - 1] = v;
-    });
-    const realHeaders = headers.filter((h) => h);
-
-    if (isLectura) {
-      // Escribir fórmulas VLOOKUP (regulares, no compartidas) para filas 2..N
-      // N = número de productos del INVENTARIO + 1 (para dejar margen)
-      const invSheet = tplWb.getWorksheet(tplWb.worksheets.map((w) => w.name).find((n) => normalizar(n) === "inventario"));
-      const invLastRow = invSheet ? invSheet.rowCount : 2;
-      const invColCount = invSheet ? invSheet.columnCount : 10;
-      const lastCol = String.fromCharCode(64 + (invColCount > 26 ? 26 : invColCount));
-      // Detectar headers de INVENTARIO
-      const invHeaders = [];
-      if (invSheet) {
-        const invHeaderRow = invSheet.getRow(1);
-        invHeaderRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          const v = String(cell.value ?? "").trim();
-          if (v) invHeaders[colNumber - 1] = v;
-        });
-      }
-
-      // Mapeo de columna LECTURA -> columna INVENTARIO (por encabezado normalizado)
-      const lecturaToInvCol = realHeaders.map((h) => {
-        const nh = normalizar(h);
-        for (let j = 0; j < invHeaders.length; j++) {
-          if (normalizar(invHeaders[j]) === nh) return j + 1;
-        }
-        return null;
-      });
-
-      const numRows = Math.max(tplWs.rowCount, 100);
-      for (let r = 2; r <= numRows; r++) {
-        const row = newWs.getRow(r);
-        for (let c = 1; c <= realHeaders.length; c++) {
-          const invCol = lecturaToInvCol[c - 1];
-          if (invCol === null || invCol === undefined) continue;
-          if (c === 1 || c === 2) continue; // zona y código son inputs
-          const sheetRef = invSheetName.includes(" ") ? `'${invSheetName}'` : invSheetName;
-          const formula = `VLOOKUP($B${r},${sheetRef}!$A$2:$${lastCol}$${invLastRow},${invCol},0)`;
-          row.getCell(c).value = { formula };
-        }
+    // Fórmulas regulares en cada columna mapeada. En ESCANEO solo se escriben
+    // donde la plantilla original tenía VLOOKUP (ciertas columnas son entrada manual).
+    const invLastRow = wsInv.rowCount;
+    const numRows = Math.max(tplWs.rowCount, 100);
+    for (let r = spec.headerRow + 1; r <= numRows; r++) {
+      const row = newWs.getRow(r);
+      for (const [colScan, colInv] of spec.columnas) {
+        row.getCell(colScan).value = {
+          formula: formulaVLOOKUP({
+            codeCol: spec.codeCol,
+            row: r,
+            sheet: spec.invSheetName,
+            tableStartCol: spec.tableStartCol,
+            tableEndCol: spec.tableEndCol,
+            tableLastRow: invLastRow,
+            sourceCol: colInv,
+          }),
+        };
       }
     }
-    // Para escaneo (plano): no escribir fórmulas, solo headers (las filas se llenan al escanear)
-
-    // Forzar recálculo
+    // Las fórmulas generadas ya usan referencias directas; no requieren reescritura
+    // de nombres definidos. Conservamos los nombres originales del libro intactos.
+    void definedNames;
     tplWb.calcProperties = { fullCalcOnLoad: true };
   }
 
