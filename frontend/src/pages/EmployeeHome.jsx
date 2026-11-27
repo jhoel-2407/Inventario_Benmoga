@@ -12,7 +12,8 @@ function EmployeeHome({ user, local }) {
   const navigate = useNavigate();
   const color = colorForUser(user);
   const [zones, setZones] = useState([]);
-  const [summary, setSummary] = useState({ unidades: 0, productosDistintos: 0, zonaActiva: null, inventario: null });
+  const [summary, setSummary] = useState({ unidades: 0, productosDistintos: 0, zonaActiva: null, inventario: null, zonas: [] });
+  const [zonaSel, setZonaSel] = useState('');
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -29,6 +30,12 @@ function EmployeeHome({ user, local }) {
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   }, [local?.id]);
   useEffect(() => { load(); }, [load]);
+  // Zona seleccionada para consultar el conteo personal (por zona). Al montar
+  // arranca con la zona activa; el empleado puede cambiar entre zonas.
+  useEffect(() => {
+    const id = summary.zonaActiva?.id;
+    setZonaSel(id != null ? String(id) : '');
+  }, [summary]);
   function enterZone(zona) {
     setBusyZone(zona.id);
     localStorage.setItem('levis_zone', String(zona.id));
@@ -37,6 +44,10 @@ function EmployeeHome({ user, local }) {
   const zona = summary.zonaActiva;
   const filtro = q.trim().toLowerCase();
   const visibles = filtro ? zones.filter(z => String(z.numero).includes(filtro) || (z.nombre || '').toLowerCase().includes(filtro)) : zones;
+  const zonasResumen = summary.zonas || [];
+  const zonaSelInfo = zonasResumen.find((z) => String(z.zonaId) === String(zonaSel)) || null;
+  const unidadesZonaSel = Number(zonaSelInfo?.unidades || 0);
+  const totalUnidades = Number(summary.unidades || 0);
   return <div className="page-stack">
     <div className="page-heading">
       <div><p className="eyebrow">MI CONTEO</p><h1>Hola, {(user?.nombre || '').split(' ')[0] || 'empleado'}</h1><p className="muted">Este es tu panel. Elige la zona donde vas a contar y empieza a escanear.</p></div>
@@ -51,9 +62,9 @@ function EmployeeHome({ user, local }) {
       <span className="profile-badge" style={{ background: color.bg, color: color.fg }}>Tu color de identificación</span>
     </Card>
     <div className="stats-grid">
-      <Stat icon={ScanLine} label="Unidades escaneadas" value={loading ? '—' : (summary.unidades || 0).toLocaleString('es-CO')} sub="En el inventario activo"/>
+      <Stat icon={ScanLine} label="Unidades registradas" value={loading ? '—' : totalUnidades.toLocaleString('es-CO')} sub="En el inventario activo"/>
       <Stat icon={Boxes} label="Códigos distintos" value={loading ? '—' : (summary.productosDistintos || 0).toLocaleString('es-CO')} sub="Referencias que has contado"/>
-      <Stat icon={Warehouse} label="Zona actual" value={zona ? `Zona ${zona.numero}` : 'Sin zona'} sub={zona?.nombre || 'Selecciona una zona abajo'}/>
+      <Stat icon={Warehouse} label={zonaSelInfo ? `Conteo · Zona ${zonaSelInfo.zona}` : "Conteo por zona"} value={loading ? '—' : (zonaSelInfo ? unidadesZonaSel.toLocaleString('es-CO') : totalUnidades.toLocaleString('es-CO'))} sub={zonaSelInfo ? `Zona ${zonaSelInfo.zona} · ${zonaSelInfo.lecturas || 0} lecturas` : "Selecciona una zona para ver su conteo"}/>
       <Stat icon={FileSpreadsheet} label="Inventario activo" value={summary.inventario ? 'En curso' : 'Ninguno'} sub={summary.inventario?.nombre || 'Sin inventario activo'}/>
     </div>
     {zona && <div className="selected-zone big-zone">
@@ -63,6 +74,20 @@ function EmployeeHome({ user, local }) {
     </div>}
     <Card>
       <div className="card-heading"><div><h2>Zonas de trabajo</h2><p className="muted">{local?.nombre || 'Local'} · {zones.length} zonas. Toca una para entrar a escanear.</p></div><div className="heading-icon"><Warehouse/></div></div>
+      <div className="tabla-tools">
+        <label className="muted" htmlFor="zona-conteo">Conteo por zona</label>
+        <select id="zona-conteo" data-testid="zona-conteo" className="zona-conteo-select" value={zonaSel} onChange={(e) => setZonaSel(e.target.value)}>
+          <option value="">Todas las zonas (total general)</option>
+          {zonasResumen.map((z) => (
+            <option key={z.zonaId} value={String(z.zonaId)}>Zona {z.zona}{z.lecturas ? ` · ${z.lecturas} lecturas` : ''}</option>
+          ))}
+        </select>
+      </div>
+      {zonaSelInfo && <div className="selected-zone" data-testid="conteo-zona-sel">
+        <CheckCircle2 size={17}/>
+        <span>Conteo en <b>Zona {zonaSelInfo.zona}</b>: <b>{(Number(zonaSelInfo.unidades) || 0).toLocaleString('es-CO')}</b> unidades escaneadas por ti.</span>
+        <button className="btn primary" onClick={() => navigate('/conteo')}><ScanLine size={16}/> Continuar escaneando</button>
+      </div>}
       {zones.length > 8 && <div className="search-box"><PackageSearch size={17}/><input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar zona por número o nombre…" inputMode="numeric"/></div>}
       {zones.length ? (visibles.length ? <div className="zone-grid">{visibles.map(z => <button key={z.id} type="button" className={`zone-card zone-pick ${zona?.id === z.id ? 'active' : ''}`} onClick={() => enterZone(z)} disabled={busyZone === z.id}>
         <div className="zone-card-top"><div className="zone-number" style={{ background: color.bg, color: color.fg }}>{String(z.numero).padStart(2, '0')}</div><div><b>{`Zona ${z.numero}`}</b><span>{zona?.id === z.id ? 'Zona en uso' : 'Entrar a contar'}</span></div></div>

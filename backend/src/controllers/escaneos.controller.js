@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { detalleUsuarioInventario, detalleUsuarioZona, listarNovedades, registrarEscaneo, resumenMio, escaneosRecientes } from "../services/escaneos.service.js";
+import { detalleUsuarioInventario, detalleUsuarioZona, eliminarEscaneo, listarNovedades, registrarEscaneo, resumenMio, escaneosRecientes } from "../services/escaneos.service.js";
 
 export async function crear(req, res, next) {
   try {
@@ -79,5 +79,15 @@ export async function detalleUsuarioZonaCtrl(req, res, next) {
     if (!Number.isInteger(zonaId) || zonaId <= 0)
       return res.status(400).json({ error: "zonaId es obligatorio." });
     res.json({ productos: await detalleUsuarioZona(inventarioId, usuarioId, zonaId) });
+  } catch (error) { next(error); }
+}
+
+export async function eliminar(req, res, next) {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return res.status(400).json({ error: "Id de lectura invalido." });
+    const data = await eliminarEscaneo(req.usuario, BigInt(id));
+    res.json(data);
   } catch (error) { next(error); }
 }

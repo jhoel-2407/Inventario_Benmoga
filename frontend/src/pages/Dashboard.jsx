@@ -21,7 +21,7 @@ function Dashboard({ local }) {
     let t = null;
     const handler = (e) => {
       const ev = e.detail;
-      if (!ev || !['escaneo', 'sesion', 'zona_finalizada'].includes(ev.tipo)) return;
+      if (!ev || !['escaneo', 'sesion', 'zona_finalizada', 'escaneo_eliminado'].includes(ev.tipo)) return;
       if (t) clearTimeout(t);
       t = setTimeout(load, 400);
     };

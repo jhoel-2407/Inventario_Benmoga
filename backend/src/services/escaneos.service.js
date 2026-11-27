@@ -412,7 +412,7 @@ export async function detalleUsuarioZona(inventarioId, usuarioId, zonaId) {
       orderBy: { leidoEn: "asc" },
       include: {
         inventarioProducto: {
-          include: { producto: { select: { codigoBarras: true, descripcion: true, item: true } } },
+          include: { producto: { select: { codigoBarras: true, descripcion: true, item: true, detalle1: true, detalle2: true, referencia: true, estilo: true } } },
         },
       },
     }),
@@ -424,23 +424,45 @@ export async function detalleUsuarioZona(inventarioId, usuarioId, zonaId) {
 
   const items = [
     ...escaneos.map((e) => {
-      const ip = e.inventarioProducto;
+      const info = descriptoresDeInventarioProducto(e.inventarioProducto);
       return {
+        id: String(e.id),
+        tipo: "escaneo",
+        inventarioId,
+        usuarioId,
+        zonaId,
         leidoEn: e.leidoEn,
-        codigoBarras: ip?.producto?.codigoBarras || e.codigoLeido,
-        descripcion: ip?.descripcion || ip?.producto?.descripcion || "",
-        item: ip?.item || ip?.producto?.item || "",
+        codigoBarras: info.codigoBarras || e.codigoLeido,
+        descripcion: info.descripcion || "",
+        item: info.item || "",
         cantidad: e.cantidad,
         esNovedad: false,
+        referencia: info.referencia || info.item || info.estilo || "",
+        estilo: info.estilo || "",
+        talla: info.detalle1 || "",
+        color: info.detalle2 || "",
+        genero: info.genero || "",
+        subGrupo: info.subGrupo || "",
       };
     }),
     ...novedades.map((n) => ({
+      id: String(n.id),
+      tipo: "novedad",
+      inventarioId,
+      usuarioId,
+      zonaId,
       leidoEn: n.leidoEn,
       codigoBarras: n.codigoLeido,
       descripcion: n.descripcion || "N/A (no pertenece al inventario)",
       item: "",
       cantidad: 1,
       esNovedad: true,
+      referencia: "",
+      estilo: "",
+      talla: "",
+      color: "",
+      genero: "",
+      subGrupo: "",
     })),
   ].sort((a, b) => new Date(a.leidoEn) - new Date(b.leidoEn));
 
@@ -518,6 +540,64 @@ export async function listarNovedades(inventarioId, zonaId = null, usuarioId = n
 });
 }
 
+// Eliminación definitiva de una lectura accidental. Solo el dueño de la
+// lectura (empleado autenticado) puede eliminarla y solo si pertenece al
+// inventario ACTIVO del local (los inventarios finalizados quedan protegidos).
+// No hay soft delete ni restauración: la baja es definitiva en la BD.
+export async function eliminarEscaneo(usuario, id) {
+  const idNum = Number(id);
+  if (!Number.isInteger(idNum) || idNum <= 0) throw errorConEstado("Id de lectura invalido.", 400);
+
+  const esc = await prisma.escaneo.findUnique({
+    where: { id: idNum },
+    include: { zona: { select: { id: true, numero: true, nombre: true, localId: true } } },
+  });
+  const novedad = esc ? null : await prisma.escaneoNovedad.findUnique({
+    where: { id: idNum },
+    include: { zona: { select: { id: true, numero: true, nombre: true, localId: true } } },
+  });
+  const target = esc || novedad;
+  if (!target) throw errorConEstado("Lectura no encontrada.", 404);
+  if (Number(target.usuarioId) !== Number(usuario.id)) {
+    throw errorConEstado("No puedes eliminar una lectura de otro empleado.", 403);
+  }
+  const inventarioActivo = await prisma.inventario.findFirst({
+    where: { estado: "ACTIVO", localId: target.zona.localId },
+    orderBy: { fechaInventario: "desc" },
+    select: { id: true },
+  });
+  const inventarioObjetivo = esc ? esc.inventarioId : novedad.inventarioId;
+  if (!inventarioActivo || inventarioActivo.id !== inventarioObjetivo) {
+    throw errorConEstado("No puedes eliminar una lectura de un inventario finalizado.", 409);
+  }
+
+  const eliminado = esc
+    ? await prisma.escaneo.delete({ where: { id: esc.id } })
+    : await prisma.escaneoNovedad.delete({ where: { id: novedad.id } });
+
+  const resumen = await resumenMio(usuario, target.zona.localId);
+
+  emitirLocal(target.zona.localId, {
+    type: "escaneo_eliminado",
+    tipo: "escaneo_eliminado",
+    localId: target.zona.localId,
+    accion: "eliminar",
+    inventarioId: inventarioObjetivo,
+    zonaId: target.zonaId,
+    zona: target.zona.nombre || `Zona ${target.zona.numero}`,
+    zonaNumero: target.zona.numero,
+    usuarioId: usuario.id,
+    usuario: usuario.nombre || "",
+    codigoBarras: target.codigoLeido,
+    leidoEn: target.leidoEn,
+    fecha: target.leidoEn,
+  });
+
+  const dato = esc ? { id: String(eliminado.id), codigoBarras: eliminado.codigoLeido, cantidad: eliminado.cantidad } : { id: String(eliminado.id), codigoBarras: eliminado.codigoLeido };
+
+  return { ok: true, mensaje: "Lectura eliminada definitivamente.", escaneo: dato, resumen };
+}
+
 export async function resumenMio(usuario, localIdParam) {
   const sesion = await prisma.sesionZona.findFirst({
     where: { usuarioId: usuario.id, estado: "ACTIVA" },
@@ -539,19 +619,36 @@ export async function resumenMio(usuario, localIdParam) {
     zonaActiva,
     inventario: inventario ? { id: inventario.id, nombre: inventario.nombre } : null,
   };
-  if (!inventario) return { ...base, unidades: 0, productosDistintos: 0 };
+  if (!inventario) return { ...base, unidades: 0, productosDistintos: 0, zonas: [] };
 
   // Un solo agregado en la base: unidades y referencias distintas del empleado
   // sin traer cada lectura al servidor.
-  const [mio] = await prisma.$queryRaw`
-    SELECT CAST(COALESCE(SUM(cantidad), 0) AS SIGNED) AS unidades,
-           CAST(COUNT(DISTINCT inventarioProductoId) AS SIGNED) AS distintos
-    FROM Escaneo
-    WHERE inventarioId = ${inventario.id} AND usuarioId = ${usuario.id}`;
+  const [mio, porZona] = await Promise.all([
+    prisma.$queryRaw`
+      SELECT CAST(COALESCE(SUM(cantidad), 0) AS SIGNED) AS unidades,
+             CAST(COUNT(DISTINCT inventarioProductoId) AS SIGNED) AS distintos
+      FROM Escaneo
+      WHERE inventarioId = ${inventario.id} AND usuarioId = ${usuario.id}`,
+    prisma.escaneo.groupBy({
+      by: ["zonaId"],
+      where: { inventarioId: inventario.id, usuarioId: usuario.id },
+      _sum: { cantidad: true },
+      _count: { id: true },
+    }),
+  ]);
+
+  // Conteos por zona del propio empleado (para el panel "Mi conteo": cada zona
+  // con su propio total y el total general en `unidades`).
+  const zonas = porZona.map((z) => ({
+    zonaId: z.zonaId,
+    unidades: z._sum.cantidad || 0,
+    lecturas: z._count.id || 0,
+  }));
 
   return {
     ...base,
-    unidades: Number(mio?.unidades || 0),
-    productosDistintos: Number(mio?.distintos || 0),
+    unidades: Number(mio?.[0]?.unidades || 0),
+    productosDistintos: Number(mio?.[0]?.distintos || 0),
+    zonas,
   };
 }

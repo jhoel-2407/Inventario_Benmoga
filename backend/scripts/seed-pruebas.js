@@ -71,6 +71,9 @@ async function limpiarLocal(localId) {
     await prisma.escaneo.deleteMany({
       where: { inventarioId: { in: inventarios.map((i) => i.id) } },
     });
+    await prisma.escaneoNovedad.deleteMany({
+      where: { inventarioId: { in: inventarios.map((i) => i.id) } },
+    });
   }
   const zonas = await prisma.zona.findMany({ where: { localId }, select: { id: true } });
   if (zonas.length) {
@@ -122,16 +125,6 @@ async function main() {
   const idPorCorreo = new Map(usuarios.map((u) => [u.correo, u.id]));
   const adminId = idPorCorreo.get("admin.pruebas@benmoga.test");
 
-  const zonas = [];
-  for (const z of ZONAS) {
-    zonas.push(
-      await prisma.zona.create({
-        data: { localId: local.id, numero: z.numero, nombre: z.nombre, tipo: z.tipo },
-      }),
-    );
-  }
-  const zonaPorNumero = new Map(zonas.map((z) => [z.numero, z]));
-
   const inventario = await prisma.inventario.create({
     data: {
       localId: local.id,
@@ -141,6 +134,16 @@ async function main() {
       creadoPorId: adminId,
     },
   });
+
+  const zonas = [];
+  for (const z of ZONAS) {
+    zonas.push(
+      await prisma.zona.create({
+        data: { localId: local.id, numero: z.numero, nombre: z.nombre, tipo: z.tipo, inventarioId: inventario.id },
+      }),
+    );
+  }
+  const zonaPorNumero = new Map(zonas.map((z) => [z.numero, z]));
 
   const ipPorCodigo = new Map();
   for (const p of PRODUCTOS) {

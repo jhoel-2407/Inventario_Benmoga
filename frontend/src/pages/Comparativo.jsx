@@ -26,7 +26,7 @@ function Comparativo({ local }) {
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
   useEffect(() => {
     let t = null;
-    const handler = (e) => { const ev = e.detail; if (!ev || !['escaneo', 'sesion', 'zona_finalizada'].includes(ev.tipo)) return; if (t) clearTimeout(t); t = setTimeout(load, 500); };
+    const handler = (e) => { const ev = e.detail; if (!ev || !['escaneo', 'sesion', 'zona_finalizada', 'escaneo_eliminado'].includes(ev.tipo)) return; if (t) clearTimeout(t); t = setTimeout(load, 500); };
     window.addEventListener('levis:realtime', handler);
     return () => { window.removeEventListener('levis:realtime', handler); if (t) clearTimeout(t); };
   }, [load]);

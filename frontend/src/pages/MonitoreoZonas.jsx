@@ -118,7 +118,7 @@ function MonitoreoZonas({ local }) {
   useEffect(() => {
     const handler = (e) => {
       const ev = e.detail;
-      if (!ev || ev.tipo !== 'escaneo') return;
+      if (!ev || (ev.tipo !== 'escaneo' && ev.tipo !== 'escaneo_eliminado')) return;
       if (local?.id && ev.localId && ev.localId !== local.id) return;
       setEventos((prev) => [ev, ...prev].slice(0, 200));
     };
