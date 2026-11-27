@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { detalleUsuarioInventario, detalleUsuarioZona, eliminarEscaneo, listarNovedades, registrarEscaneo, resumenMio, escaneosRecientes } from "../services/escaneos.service.js";
+import { detalleUsuarioInventario, detalleUsuarioZona, detalleZona, eliminarEscaneo, listarNovedades, registrarEscaneo, resumenMio, resumenZona, escaneosRecientes } from "../services/escaneos.service.js";
 
 export async function crear(req, res, next) {
   try {
@@ -82,12 +82,41 @@ export async function detalleUsuarioZonaCtrl(req, res, next) {
   } catch (error) { next(error); }
 }
 
+export async function detalleZonaCtrl(req, res, next) {
+  try {
+    const inventarioId = Number(req.query.inventarioId);
+    const zonaId = Number(req.query.zonaId);
+    if (!Number.isInteger(inventarioId) || inventarioId <= 0)
+      return res.status(400).json({ error: "inventarioId es obligatorio." });
+    if (!Number.isInteger(zonaId) || zonaId <= 0)
+      return res.status(400).json({ error: "zonaId es obligatorio." });
+    const usuarioId = req.query.usuarioId ? Number(req.query.usuarioId) : null;
+    const q = req.query.q || "";
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 50;
+    const data = await detalleZona(inventarioId, zonaId, { usuarioId: usuarioId && Number.isInteger(usuarioId) ? usuarioId : null, q, page, pageSize });
+    res.json(data);
+  } catch (error) { next(error); }
+}
 export async function eliminar(req, res, next) {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0)
       return res.status(400).json({ error: "Id de lectura invalido." });
     const data = await eliminarEscaneo(req.usuario, BigInt(id));
+    res.json(data);
+  } catch (error) { next(error); }
+}
+
+export async function resumenZonaCtrl(req, res, next) {
+  try {
+    const inventarioId = Number(req.query.inventarioId);
+    const zonaId = Number(req.query.zonaId);
+    if (!Number.isInteger(inventarioId) || inventarioId <= 0)
+      return res.status(400).json({ error: "inventarioId es obligatorio." });
+    if (!Number.isInteger(zonaId) || zonaId <= 0)
+      return res.status(400).json({ error: "zonaId es obligatorio." });
+    const data = await resumenZona(inventarioId, zonaId);
     res.json(data);
   } catch (error) { next(error); }
 }

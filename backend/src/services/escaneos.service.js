@@ -469,6 +469,138 @@ export async function detalleUsuarioZona(inventarioId, usuarioId, zonaId) {
   return items.map((it, idx) => ({ posicion: idx + 1, ...it }));
 }
 
+export async function detalleZona(inventarioId, zonaId, { usuarioId = null, q = "", page = 1, pageSize = 50 } = {}) {
+  const invId = Number(inventarioId);
+  const zId = Number(zonaId);
+  const term = String(q || "").trim().toLowerCase();
+
+  const whereEsc = { inventarioId: invId, zonaId: zId };
+  if (usuarioId) whereEsc.usuarioId = Number(usuarioId);
+
+  const whereNov = { inventarioId: invId, zonaId: zId };
+  if (usuarioId) whereNov.usuarioId = Number(usuarioId);
+
+  // Búsqueda por código, referencia o descripción (en memoria, sobre los
+  // campos ya cargados; el volumen por zona es manejable).
+  const [escaneos, novedades] = await Promise.all([
+    prisma.escaneo.findMany({
+      where: whereEsc,
+      orderBy: { leidoEn: "asc" },
+      include: {
+        inventarioProducto: {
+          include: { producto: { select: { codigoBarras: true, descripcion: true, item: true, detalle1: true, detalle2: true, referencia: true, estilo: true, genero: true, subGrupo: true } } },
+        },
+        usuario: { select: { id: true, nombre: true, color: true } },
+      },
+    }),
+    prisma.escaneoNovedad.findMany({
+      where: whereNov,
+      orderBy: { leidoEn: "asc" },
+      include: { usuario: { select: { id: true, nombre: true, color: true } } },
+    }),
+  ]);
+
+  const items = [
+    ...escaneos.map((e) => {
+      const info = descriptoresDeInventarioProducto(e.inventarioProducto);
+      return {
+        id: String(e.id),
+        tipo: "escaneo",
+        inventarioId: invId,
+        usuarioId: e.usuarioId,
+        zonaId: zId,
+        leidoEn: e.leidoEn,
+        codigoBarras: info.codigoBarras || e.codigoLeido,
+        descripcion: info.descripcion || "",
+        item: info.item || "",
+        cantidad: e.cantidad,
+        esNovedad: false,
+        referencia: info.referencia || info.item || info.estilo || "",
+        estilo: info.estilo || "",
+        talla: info.detalle1 || "",
+        color: info.detalle2 || "",
+        genero: info.genero || "",
+        subGrupo: info.subGrupo || "",
+        usuarioNombre: e.usuario?.nombre || "",
+        usuarioColor: e.usuario?.color || null,
+      };
+    }),
+    ...novedades.map((n) => ({
+      id: String(n.id),
+      tipo: "novedad",
+      inventarioId: invId,
+      usuarioId: n.usuarioId,
+      zonaId: zId,
+      leidoEn: n.leidoEn,
+      codigoBarras: n.codigoLeido,
+      descripcion: n.descripcion || "N/A (no pertenece al inventario)",
+      item: "",
+      cantidad: 1,
+      esNovedad: true,
+      referencia: "",
+      estilo: "",
+      talla: "",
+      color: "",
+      genero: "",
+      subGrupo: "",
+      usuarioNombre: n.usuario?.nombre || "",
+      usuarioColor: n.usuario?.color || null,
+    })),
+  ].sort((a, b) => new Date(a.leidoEn) - new Date(b.leidoEn));
+
+  // Filtro por texto (código, referencia, descripción).
+  const filtrados = term
+    ? items.filter((it) => {
+        const hay = (v) => String(v || "").toLowerCase().includes(term);
+        return hay(it.codigoBarras) || hay(it.referencia) || hay(it.descripcion) || hay(it.item);
+      })
+    : items;
+
+  const total = filtrados.length;
+  const ps = Math.max(1, Number(pageSize) || 50);
+  const pg = Math.max(1, Number(page) || 1);
+  const inicio = (pg - 1) * ps;
+  const pagina = filtrados.slice(inicio, inicio + ps).map((it, idx) => ({ posicion: inicio + idx + 1, ...it }));
+
+  return { total, page: pg, pageSize: ps, items: pagina };
+}
+export async function resumenZona(inventarioId, zonaId) {
+  const invId = Number(inventarioId);
+  const zId = Number(zonaId);
+  const [escaneos, novedades] = await Promise.all([
+    prisma.escaneo.findMany({
+      where: { inventarioId: invId, zonaId: zId },
+      select: { usuarioId: true, cantidad: true, usuario: { select: { id: true, nombre: true, color: true } } },
+    }),
+    prisma.escaneoNovedad.findMany({
+      where: { inventarioId: invId, zonaId: zId },
+      select: { usuarioId: true, usuario: { select: { id: true, nombre: true, color: true } } },
+    }),
+  ]);
+  const map = new Map();
+  let totalUnidades = 0;
+  let totalLecturas = 0;
+  for (const e of escaneos) {
+    totalUnidades += e.cantidad || 1;
+    totalLecturas += 1;
+    const u = e.usuario || { id: e.usuarioId, nombre: "Empleado", color: null };
+    const cur = map.get(e.usuarioId) || { usuarioId: e.usuarioId, nombre: u.nombre, color: u.color, unidades: 0, lecturas: 0 };
+    cur.unidades += e.cantidad || 1;
+    cur.lecturas += 1;
+    map.set(e.usuarioId, cur);
+  }
+  for (const n of novedades) {
+    totalUnidades += 1;
+    totalLecturas += 1;
+    const u = n.usuario || { id: n.usuarioId, nombre: "Empleado", color: null };
+    const cur = map.get(n.usuarioId) || { usuarioId: n.usuarioId, nombre: u.nombre, color: u.color, unidades: 0, lecturas: 0 };
+    cur.unidades += 1;
+    cur.lecturas += 1;
+    map.set(n.usuarioId, cur);
+  }
+  const empleados = Array.from(map.values()).sort((a, b) => b.unidades - a.unidades);
+  return { totalUnidades, totalLecturas, empleados };
+}
 export async function listarNovedades(inventarioId, zonaId = null, usuarioId = null) {
   const where = { inventarioId };
   if (zonaId) where.zonaId = zonaId;
