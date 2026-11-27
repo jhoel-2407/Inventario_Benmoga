@@ -46,7 +46,10 @@ function Comparativo({ local }) {
     if (filtro === 'SIN STOCK') arr = arr.filter((p) => (Number(p.existencia) || 0) === 0);
     else if (filtro === 'TODOS') arr = arr.filter((p) => (Number(p.existencia) || 0) > 0);
     else if (filtro === 'OK') arr = arr.filter((p) => p.estado === 'OK' && (Number(p.existencia) || 0) > 0 && (Number(p.contado) || 0) > 0);
-    else arr = arr.filter((p) => p.estado === filtro);
+    else if (filtro === 'FALTANTE') arr = arr.filter((p) => p.estado === 'FALTANTE' || p.estado === 'DIFERENCIAS MIXTAS');
+  else if (filtro === 'SOBRANTE') arr = arr.filter((p) => p.estado === 'SOBRANTE' || p.estado === 'DIFERENCIAS MIXTAS');
+  else if (filtro === 'DIFERENCIAS MIXTAS') arr = arr.filter((p) => p.estado === 'DIFERENCIAS MIXTAS');
+  else arr = arr.filter((p) => p.estado === filtro);
     if (texto) {
       arr = arr.filter((p) => {
         const ref = p.referencia || p.estilo || '';
@@ -79,8 +82,9 @@ function Comparativo({ local }) {
   const sinStockCount = (vista === 'REFERENCIA' ? productosPorRef : productos).filter((p) => (Number(p.existencia) || 0) === 0).length;
   const exactosEscaneados = conStock.filter((p) => p.estado === 'OK' && (Number(p.contado) || 0) > 0).length;
   const filtros = [
-    { k: 'FALTANTE', label: 'Faltantes', n: resVista?.faltantes || 0, cls: 'red' },
-    { k: 'SOBRANTE', label: 'Sobrantes', n: resVista?.sobrantes || 0, cls: 'amber' },
+    { k: 'FALTANTE', label: 'Con faltantes', n: (resVista?.faltantes || 0) + (resVista?.mixtas || 0), cls: 'red' },
+    { k: 'SOBRANTE', label: 'Con sobrantes', n: (resVista?.sobrantes || 0) + (resVista?.mixtas || 0), cls: 'amber' },
+    { k: 'DIFERENCIAS MIXTAS', label: 'Mixtas', n: resVista?.mixtas || 0, cls: 'amber' },
     { k: 'OK', label: 'Exactos', n: exactosEscaneados, cls: 'green' },
     { k: 'SIN CONTEO', label: 'Sin conteo', n: resVista?.sinConteo || 0, cls: 'gray' },
     { k: 'SIN STOCK', label: 'Sin stock (0 en maestra)', n: sinStockCount, cls: 'gray' },
@@ -120,7 +124,7 @@ function Comparativo({ local }) {
         </div>
         {filas.length ? <>
           <div className="table-wrap"><table><thead>
-            {vista==='BARRAS' ? <tr><th>Código</th><th>Producto</th><th className="num">Maestra</th><th className="num">Contado</th><th className="num">Diferencia</th><th>Estado</th></tr> : <tr><th>Referencia</th><th>Descripción</th><th className="num">Maestra</th><th className="num">Contado</th><th className="num">Diferencia</th><th>Estado</th></tr>}
+            {vista==='BARRAS' ? <tr><th>Código</th><th>Producto</th><th className="num">Maestra</th><th className="num">Contado</th><th className="num">Diferencia</th><th>Estado</th></tr> : <tr><th>Referencia</th><th>Descripción</th><th className="num">Maestra</th><th className="num">Contado</th><th className="num">Diferencia</th><th className="num">Faltantes</th><th className="num">Sobrantes</th><th>Estado</th></tr>}
           </thead><tbody>
             {vista==='BARRAS' ? filas.map((p) => <tr key={p.codigoBarras} data-testid="fila-producto">
               <td className="mono">{p.codigoBarras}</td>
@@ -136,9 +140,11 @@ function Comparativo({ local }) {
               <td className="num">{p.existencia.toLocaleString('es-CO')}</td>
               <td className="num">{p.contado.toLocaleString('es-CO')}</td>
               <td className={`num ${p.diferencia < 0 ? 'dif-neg' : p.diferencia > 0 ? 'dif-pos' : ''}`}>{p.diferencia > 0 ? `+${p.diferencia.toLocaleString('es-CO')}` : p.diferencia.toLocaleString('es-CO')}</td>
+              <td className="num">{(p.faltantes || 0).toLocaleString('es-CO')}</td>
+              <td className="num">{(p.sobrantes || 0).toLocaleString('es-CO')}</td>
               <td><span className={`estado-badge ${p.estado.toLowerCase().replace(' ', '-')}`}>{p.estado}</span></td>
               </tr>
-              {refAbierta === p.referencia && <tr><td colSpan={6} style={{ background: '#fafbfc', padding: '12px 14px' }}>
+              {refAbierta === p.referencia && <tr><td colSpan={8} style={{ background: '#fafbfc', padding: '12px 14px' }}>
                 <ReferenciaCodigos productos={productos} referencia={p.referencia} manejaTallas={manejaTallas} />
                 {(data?.zonasPorReferencia?.[p.referencia || 'SIN REFERENCIA'] || []).length > 0 && (
                   <div style={{ marginTop: 12 }}>

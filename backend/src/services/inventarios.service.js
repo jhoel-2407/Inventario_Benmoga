@@ -82,7 +82,7 @@ export async function obtenerComparativoActivo(localId) {
 
   const { productos, resumen } = resumirComparativo(filas);
   const { productosPorReferencia, resumenPorReferencia } =
-    resumirComparativoPorReferencia(filasRef);
+    resumirComparativoPorReferencia(filasRef, productos);
 
   return {
     inventario,

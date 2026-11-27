@@ -136,36 +136,73 @@ export async function comparativoPorReferencia(inventarioId) {
 }
 
 // Resumir filas agrupadas por referencia
-export function resumirComparativoPorReferencia(filasRef) {
-  let unidadesMaestro = 0;
-  let unidadesContadas = 0;
-  let faltantes = 0;
-  let sobrantes = 0;
-  let sinConteo = 0;
-  let ok = 0;
-  let conConteo = 0;
+export function resumirComparativoPorReferencia(filasRef, productosPorCodigo = []) {
+  // Agrupar faltantes/sobrantes reales por referencia a partir de los códigos
+  // individuales. Así un sobrante en un código no oculta un faltante en otro.
+  const porRef = new Map();
+  for (const p of productosPorCodigo || []) {
+    const ref = (p.referencia || p.item || p.estilo || 'SIN REFERENCIA').trim() || 'SIN REFERENCIA';
+    const cur = porRef.get(ref) || { faltantes: 0, sobrantes: 0, codigosConDiferencia: 0, codigosFaltantes: 0, codigosSobrantes: 0, codigosOk: 0, totalCodigos: 0 };
+    const falt = Math.max((Number(p.existencia) || 0) - (Number(p.contado) || 0), 0);
+    const sobr = Math.max((Number(p.contado) || 0) - (Number(p.existencia) || 0), 0);
+    cur.faltantes += falt;
+    cur.sobrantes += sobr;
+    cur.totalCodigos += 1;
+    if (falt > 0 || sobr > 0) cur.codigosConDiferencia += 1;
+    if (falt > 0) cur.codigosFaltantes += 1;
+    if (sobr > 0) cur.codigosSobrantes += 1;
+    if (falt === 0 && sobr === 0) cur.codigosOk += 1;
+    porRef.set(ref, cur);
+  }
+
+  let unidadesMaestro = 0, unidadesContadas = 0, faltantes = 0, sobrantes = 0, sinConteo = 0, ok = 0, conConteo = 0, mixtas = 0;
 
   const productosPorReferencia = filasRef.map((f) => {
     const existencia = Number(f.existenciaInicial) || 0;
     const contado = Number(f.contado) || 0;
     const diferencia = contado - existencia;
-    const estado = estadoDeProducto(contado, existencia);
+    const info = porRef.get((f.referencia || '').trim()) || { faltantes: 0, sobrantes: 0, codigosConDiferencia: 0, codigosFaltantes: 0, codigosSobrantes: 0, codigosOk: 0, totalCodigos: 0 };
+    // Si no hay info por código (sin productos), calcular del agregado.
+    const falt = info.totalCodigos > 0 ? info.faltantes : Math.max(existencia - contado, 0);
+    const sobr = info.totalCodigos > 0 ? info.sobrantes : Math.max(contado - existencia, 0);
+    const stockMaestro = existencia;
+    let estado;
+    if (stockMaestro === 0) {
+      estado = contado > 0 ? 'SOBRANTE' : 'OK';
+    } else if (contado === 0) {
+      estado = 'SIN CONTEO';
+    } else if (falt > 0 && sobr > 0) {
+      estado = 'DIFERENCIAS MIXTAS';
+    } else if (falt > 0) {
+      estado = 'FALTANTE';
+    } else if (sobr > 0) {
+      estado = 'SOBRANTE';
+    } else {
+      estado = 'OK';
+    }
     if (contado > 0) conConteo++;
-    if (estado === "FALTANTE") faltantes++;
-    else if (estado === "SOBRANTE") sobrantes++;
-    else if (estado === "SIN CONTEO") sinConteo++;
+    if (estado === 'FALTANTE') faltantes++;
+    else if (estado === 'SOBRANTE') sobrantes++;
+    else if (estado === 'SIN CONTEO') sinConteo++;
+    else if (estado === 'DIFERENCIAS MIXTAS') mixtas++;
     else ok++;
     unidadesMaestro += existencia;
     unidadesContadas += contado;
     return {
-      referencia: f.referencia || "",
-      descripcion: f.descripcion || "",
-      estilo: f.estilo || "",
+      referencia: f.referencia || '',
+      descripcion: f.descripcion || '',
+      estilo: f.estilo || '',
       productos: Number(f.productos) || 0,
       existencia,
       contado,
       diferencia,
       estado,
+      faltantes: falt,
+      sobrantes: sobr,
+      codigosConDiferencia: info.codigosConDiferencia,
+      codigosFaltantes: info.codigosFaltantes,
+      codigosSobrantes: info.codigosSobrantes,
+      codigosOk: info.codigosOk,
     };
   });
 
@@ -180,6 +217,7 @@ export function resumirComparativoPorReferencia(filasRef) {
       sobrantes,
       sinConteo,
       ok,
+      mixtas,
     },
   };
 }
