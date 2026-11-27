@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Activity, AlertCircle, Barcode, Boxes, CheckCircle2, ChevronLeft, FileSpreadsheet, PackageSearch, RefreshCw, Search, Store, Users, Warehouse } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { colorForUser } from '../lib/avatar.js';
@@ -37,6 +38,8 @@ export default function ControlZonas({ local }) {
   const [detalleError, setDetalleError] = useState('');
   const [vistaMobile, setVistaMobile] = useState('lista'); // lista|detalle
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' && window.innerWidth >= 900);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   useEffect(() => {
     const handler = () => setIsDesktop(window.innerWidth >= 900);
     window.addEventListener('resize', handler);
@@ -59,6 +62,17 @@ export default function ControlZonas({ local }) {
   }, [local?.id]);
 
   useEffect(() => { cargarZonas(); }, [cargarZonas]);
+  // Auto-selección por parámetro de URL (navegación desde el comparativo).
+  useEffect(() => {
+    const zonaIdParam = searchParams.get('zonaId');
+    if (zonaIdParam && zonas.length > 0 && !zonaSel) {
+      const z = zonas.find((x) => String(x.id) === String(zonaIdParam));
+      if (z) abrirZona(z);
+    }
+    const refParam = searchParams.get('ref') || searchParams.get('q') || searchParams.get('codigo');
+    if (refParam) setBusquedaLectura(refParam);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zonas, searchParams]);
   // refresco periódico ligero
   useEffect(() => { const t = setInterval(cargarZonas, 30000); return () => clearInterval(t); }, [cargarZonas]);
 
@@ -180,7 +194,7 @@ export default function ControlZonas({ local }) {
   return <div className="page-stack">
     <div className="page-heading">
       <div><p className="eyebrow">CONTROL DE ZONAS</p><h1>Control de zonas del inventario</h1><p className="muted">Consulta el conteo por zona, empleados y lecturas. Se actualiza en tiempo real.</p></div>
-      <div className="heading-actions"><button className="btn secondary" onClick={cargarZonas}><RefreshCw size={16}/> Actualizar</button></div>
+      <div className="heading-actions"><button className="btn ghost small-btn" onClick={() => navigate('/comparativo')}><PackageSearch size={16}/> Volver al comparativo</button><button className="btn secondary" onClick={cargarZonas}><RefreshCw size={16}/> Actualizar</button></div>
     </div>
     {error && <Notice type="error" message={error} onClose={() => setError('')} />}
 

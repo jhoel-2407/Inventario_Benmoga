@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Activity, AlertTriangle, Barcode, Boxes, CheckCircle2, CircleHelp, ClipboardList, FileSpreadsheet, PackageSearch, RefreshCw, Store, Users, Warehouse } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { colorForUser } from '../lib/avatar.js';
@@ -18,6 +19,7 @@ function NombreColor({ usuario, nombre, color }) {
 }
 
 function MonitoreoZonas({ local }) {
+  const navigate = useNavigate();
   const [zonas, setZonas] = useState([]);
   const [zonaSel, setZonaSel] = useState(null);
   const [sesiones, setSesiones] = useState([]);
@@ -521,7 +523,7 @@ function MonitoreoZonas({ local }) {
                   <td className={`num ${(r.diferencia || 0) < 0 ? 'dif-neg' : (r.diferencia || 0) > 0 ? 'dif-pos' : ''}`}>{(r.diferencia || 0) > 0 ? `+${r.diferencia}` : (r.diferencia || 0)}</td>
                   <td><span className={`estado-badge ${(r.estado || '').toLowerCase().replace(' ', '-')}`}>{r.estado}</span></td>
                   <td><div className="zona-chips">
-                    {r.zonas.slice(0, 12).map((z) => <span key={z.zonaId} className="zona-chip" title={`Zona ${z.zona}`}>Z{z.zona} <b>{z.unidades.toLocaleString('es-CO')}</b></span>)}
+                    {r.zonas.slice(0, 12).map((z) => <button key={z.zonaId} type="button" className="zona-chip" title={`Ir al control de zona ${z.zona}`} onClick={() => navigate(`/control-zonas?zonaId=${z.zonaId}`)} style={{ cursor: 'pointer', border: 'none', background: 'transparent', padding: 0 }}>Z{z.zona} <b>{z.unidades.toLocaleString('es-CO')}</b></button>)}
                     {r.zonas.length > 12 && <span className="zona-chip">+{r.zonas.length - 12} más</span>}
                   </div></td>
                 </tr>)}</tbody>

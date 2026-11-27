@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Activity, ArrowDownToLine, Barcode, Boxes, ChevronDown, ChevronRight, ClipboardList, FileSpreadsheet, PackageSearch, RefreshCw, Warehouse } from 'lucide-react';
 import { api } from '../lib/api.js';
 import Notice from '../components/Notice.jsx';
@@ -8,6 +9,7 @@ import Empty from '../components/Empty.jsx';
 import ReferenciaCodigos from '../components/ReferenciaCodigos.jsx';
 
 function Comparativo({ local }) {
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -138,6 +140,18 @@ function Comparativo({ local }) {
               </tr>
               {refAbierta === p.referencia && <tr><td colSpan={6} style={{ background: '#fafbfc', padding: '12px 14px' }}>
                 <ReferenciaCodigos productos={productos} referencia={p.referencia} manejaTallas={manejaTallas} />
+                {(data?.zonasPorReferencia?.[p.referencia || 'SIN REFERENCIA'] || []).length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <div className="card-heading" style={{ marginBottom: 6 }}><div><h4 style={{ margin: 0 }}>Zonas donde se escaneó esta referencia</h4><p className="muted small">Cada botón abre el Control de zonas con esa zona seleccionada para ver sus lecturas.</p></div></div>
+                    <div className="zona-chips">
+                      {(data.zonasPorReferencia[p.referencia || 'SIN REFERENCIA'] || []).map((z) => (
+                        <button key={z.zonaId} type="button" className="zona-chip" style={{ cursor: 'pointer', border: '1px solid var(--border, #e5e7eb)', background: '#fff', padding: '4px 10px', borderRadius: 8 }} onClick={() => navigate(`/control-zonas?zonaId=${z.zonaId}`)} title={`Ir al control de zona ${z.zona}`}>
+                          Zona {z.zona} · {z.unidades.toLocaleString('es-CO')} u <span style={{ marginLeft: 4 }}>→</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </td></tr>}
             </Fragment>)}
           </tbody></table></div>
